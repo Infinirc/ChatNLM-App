@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stroke Animation</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 0;
+    }
+
+    .container {
+      margin-top: 50px;
+    }
+
+    canvas {
+      border: 1px solid #ccc;
+      display: block;
+      margin: 20px auto;
+      max-width: 90%;
+    }
+
+    h1 {
+      color: #333;
+      font-size: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>文字筆畫動畫</h1>
+    <input type="file" id="imageInput" accept="image/*">
+    <canvas id="canvas"></canvas>
+  </div>
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const imageInput = document.getElementById("imageInput");
+
+    canvas.width = 800; // 畫布寬度
+    canvas.height = 600; // 畫布高度
+
+    // 處理圖片上傳
+    imageInput.addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            drawWithAnimation(img);
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    // 動畫繪製
+    function drawWithAnimation(img) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 圖片大小和起始座標
+      const imgWidth = img.width * 0.8;
+      const imgHeight = img.height * 0.8;
+      const startX = (canvas.width - imgWidth) / 2;
+      const startY = (canvas.height - imgHeight) / 2;
+
+      const totalFrames = 100;
+      let frame = 0;
+
+      function animate() {
+        const progress = frame / totalFrames;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 在畫布中劃出部分圖片
+        ctx.drawImage(
+          img,
+          0,
+          0,
+          img.width * progress,
+          img.height,
+          startX,
+          startY,
+          imgWidth * progress,
+          imgHeight
+        );
+
+        frame++;
+        if (frame <= totalFrames) {
+          requestAnimationFrame(animate);
+        }
+      }
+
+      animate();
+    }
+  </script>
+</body>
+</html>

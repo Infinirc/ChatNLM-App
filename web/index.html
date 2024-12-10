@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="ChatNLM - AI Chatbot">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="ChatNLM">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>ChatNLM</title>
+  <link rel="manifest" href="manifest.json">
+
+  <script>
+    // The value below is injected by flutter build, do not touch.
+    var serviceWorkerVersion = null;
+  </script>
+  <!-- This script adds the flutter initialization JS code -->
+  <script src="flutter.js" defer></script>
+
+  <script>
+    // 添加流式響應支援
+    if (!window.TextDecoder) {
+      window.TextDecoder = function() {
+        return {
+          decode: function(u8arr) {
+            return decodeURIComponent(escape(String.fromCharCode.apply(null, u8arr)));
+          }
+        };
+      };
+    }
+
+    // 處理身份驗證回調
+    window.addEventListener('load', function() {
+      // 檢查當前路徑是否為回調頁面
+      if (window.location.pathname === '/auth_callback') {
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        const status = urlParams.get('status');
+        const message = urlParams.get('message');
+        
+        if (status === 'success' && token) {
+          // 存儲 token
+          localStorage.setItem('token', token);
+          
+          // 通知 Flutter WebApp
+          if (window.flutter_inappwebview) {
+            window.flutter_inappwebview.callHandler('onAuthCallback', {
+              token: token,
+              status: status
+            });
+          }
+          
+          // 重定向到主頁面
+          window.location.href = '/';
+        } else if (message) {
+          // 處理錯誤消息
+          console.error('Authentication failed:', message);
+          // 重定向到登入頁面
+          window.location.href = '/';
+        }
+      }
+    });
+
+    // Flutter Web 初始化
+    window.addEventListener('load', function(ev) {
+      // 下載主要的 dart.js
+      _flutter.loader.loadEntrypoint({
+        serviceWorker: {
+          serviceWorkerVersion: serviceWorkerVersion,
+        },
+        onEntrypointLoaded: function(engineInitializer) {
+          engineInitializer.initializeEngine({
+            // 添加流式響應相關設置
+            customStreamingTransformer: (response) => {
+              const reader = response.body.getReader();
+              const decoder = new TextDecoder();
+              let buffer = '';
+
+              return new ReadableStream({
+                start(controller) {
+                  function push() {
+                    reader.read().then(({done, value}) => {
+                      if (done) {
+                        controller.close();
+                        return;
+                      }
+
+                      const chunk = decoder.decode(value, {stream: true});
+                      buffer += chunk;
+
+                      const lines = buffer.split('\n');
+                      buffer = lines.pop() || '';
+
+                      for (const line of lines) {
+                        if (line.trim().startsWith('data: ')) {
+                          controller.enqueue(line);
+                        }
+                      }
+
+                      push();
+                    }).catch((error) => {
+                      console.error('Stream reading error:', error);
+                      controller.error(error);
+                    });
+                  }
+
+                  push();
+                }
+              });
+            }
+          }).then(function(appRunner) {
+            appRunner.runApp();
+          });
+        }
+      });
+    });
+  </script>
+
+  <style>
+    body {
+      background-color: #000000;
+      height: 100vh;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+    }
+
+    .loader {
+      width: 48px;
+      height: 48px;
+      border: 5px solid #FFF;
+      border-bottom-color: transparent;
+      border-radius: 50%;
+      animation: rotation 1s linear infinite;
+    }
+
+    @keyframes rotation {
+      0% {
+        transform: rotate(0deg);
+      }
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="loading">
+    <div class="loader"></div>
+  </div>
+</body>
+</html>

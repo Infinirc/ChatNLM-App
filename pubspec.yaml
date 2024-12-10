@@ -1,0 +1,85 @@
+name: chatnlm
+description: "A modern multimodal chat application using LLM models."
+publish_to: 'none'
+
+version: 1.0.2+1
+
+environment:
+  sdk: ^3.2.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_svg: ^2.0.9
+  universal_html: ^2.2.4
+
+  # Audio
+  flutter_sound: ^9.2.13
+  
+
+  permission_handler: ^11.1.0  # 用於請求麥克風權限
+  audio_session: ^0.1.18  # 音頻會話管理
+  logging: ^1.2.0
+  sound_stream: ^0.3.0
+  just_audio: ^0.9.34
+  audioplayers: ^5.2.1
+  flutter_audio_waveforms: ^1.2.1+8
+  soundpool: ^2.4.1
+  record: ^5.2.0
+
+
+  # Authentication
+  flutter_web_auth_2: ^3.1.1  # 使用較新版本
+
+  # UI Components
+  cupertino_icons: ^1.0.8
+  flutter_markdown: ^0.6.18
+  flutter_highlighter: ^0.1.1
+  markdown: ^7.2.1
+  google_fonts: ^6.1.0
+  flutter_math_fork: ^0.7.2
+  
+  # State Management
+  provider: ^6.1.1
+  
+  # Network & API
+  http: ^1.2.0
+  web_socket_channel: ^2.4.0
+  
+  # Storage
+  shared_preferences: ^2.2.3
+  path_provider: ^2.1.2
+  
+  # Image Handling
+  image_picker: ^1.0.7
+  # 移除 image_cropper 相關依賴，因為在 web 上有問題
+  
+  # Utilities
+  intl: ^0.19.0
+  uuid: ^4.3.3
+  logger: ^2.0.2+1
+  url_launcher: ^6.2.4
+  js: ^0.6.7
+  package_info_plus: ^8.1.1
+  
+  # File Operations
+  file_picker: ^6.1.1
+  path: ^1.8.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.8
+  json_serializable: ^6.7.1
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/images/logo/Chat-dark.svg
+    - assets/images/logo/Chat-light.svg
+    - assets/images/logo/NLM.png
+    - assets/images/logo/NLM-gen.gif

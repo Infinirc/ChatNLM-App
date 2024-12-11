@@ -11,7 +11,9 @@ import 'package:provider/provider.dart';
 import '../config/env.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/auth_provider.dart';
-
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:typed_data';
+import 'dart:convert';
 class _CopyButton extends StatefulWidget {
   final String content;
 
@@ -91,59 +93,123 @@ class ImageViewer extends StatelessWidget {
     this.isNetworkImage = false,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => Navigator.of(context).pop(),
-      child: Container(
-        color: Colors.black.withOpacity(0.9),
-        child: Stack(
-          children: [
-            Center(
-child: InteractiveViewer(
-               minScale: 0.5,
-               maxScale: 4.0,
-               child: Consumer<AuthProvider>(
-                 builder: (context, authProvider, child) {
-                   return isNetworkImage
-                     ? Image.network(
-                         '${Env.conversationApiUrl}$imagePath',
-                         headers: {
-                           'x-user-id': authProvider.userId ?? '',
-                         },
-                         errorBuilder: (context, error, stackTrace) {
-                           debugPrint('Error loading network image: $error');
-                           return _buildErrorWidget();
-                         },
-                       )
-                     : Image.file(
-                         File(imagePath),
-                         errorBuilder: (context, error, stackTrace) {
-                           debugPrint('Error loading local image: $error');
-                           return _buildErrorWidget();
-                         },
-                       );
-                 }
-               ),
-             ),
-           ),
-            Positioned(
-              top: 40,
-              right: 20,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.close,
-                  color: Colors.white,
-                  size: 30,
-                ),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ),
-          ],
-        ),
-      ),
+@override
+Widget build(BuildContext context) {
+  Widget imageWidget;
+  
+  // 處理 base64 格式圖片
+  if (imagePath.startsWith('data:image')) {
+    try {
+      final startIndex = imagePath.indexOf(',') + 1;
+      final bytes = base64.decode(imagePath.substring(startIndex));
+      imageWidget = Image.memory(
+        bytes,
+        errorBuilder: (context, error, stackTrace) {
+          debugPrint('Error loading base64 image in viewer: $error');
+          return _buildErrorWidget();
+        },
+      );
+    } catch (e) {
+      debugPrint('Error decoding base64 image in viewer: $e');
+      return _buildErrorWidget();
+    }
+  }
+  // 處理網絡圖片
+  else if (isNetworkImage) {
+    imageWidget = Consumer<AuthProvider>(
+      builder: (context, authProvider, child) {
+        return Image.network(
+          '${Env.conversationApiUrl}$imagePath',
+          headers: {
+            'x-user-id': authProvider.userId ?? '',
+          },
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Error loading network image in viewer: $error');
+            return _buildErrorWidget();
+          },
+        );
+      }
     );
   }
+  // 處理 Web 平台的圖片
+  else if (kIsWeb) {
+    imageWidget = Consumer<ChatProvider>(
+      builder: (context, chatProvider, child) {
+        final imageData = chatProvider.getImageData(imagePath);
+        if (imageData != null) {
+          return Image.memory(
+            imageData.bytes,
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint('Error loading web image in viewer: $error');
+              return _buildErrorWidget();
+            },
+          );
+        }
+        return _buildErrorWidget();
+      },
+    );
+  }
+  // 處理本地文件
+  else {
+    imageWidget = Consumer<ChatProvider>(
+      builder: (context, chatProvider, child) {
+        try {
+          return Image.file(
+            File(imagePath),
+            errorBuilder: (context, error, stackTrace) {
+              // 如果本地文件讀取失敗，嘗試從 Provider 獲取緩存數據
+              final imageData = chatProvider.getImageData(imagePath);
+              if (imageData != null) {
+                return Image.memory(
+                  imageData.bytes,
+                  errorBuilder: (context, error, stackTrace) {
+                    debugPrint('Error loading cached image in viewer: $error');
+                    return _buildErrorWidget();
+                  },
+                );
+              }
+              debugPrint('Error loading local image in viewer: $error');
+              return _buildErrorWidget();
+            },
+          );
+        } catch (e) {
+          debugPrint('Error handling local image in viewer: $e');
+          return _buildErrorWidget();
+        }
+      },
+    );
+  }
+
+  return GestureDetector(
+    onTap: () => Navigator.of(context).pop(),
+    child: Container(
+      color: Colors.black.withOpacity(0.9),
+      child: Stack(
+        children: [
+          Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: imageWidget,
+            ),
+          ),
+          Positioned(
+            top: 40,
+            right: 20,
+            child: IconButton(
+              icon: const Icon(
+                Icons.close,
+                color: Colors.white,
+                size: 30,
+              ),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
   Widget _buildErrorWidget() {
     return Column(
@@ -355,6 +421,8 @@ Future<void> _launchUrl(String urlString) async {
 
   // 新增方法：建構來源按鈕
 Widget _buildSourceButton(BuildContext context) {
+  debugPrint('Building source button with searchResults: ${message.searchResults?.length ?? 0}');
+  
   if (message.searchResults == null || message.searchResults!.isEmpty) {
     return const SizedBox.shrink();
   }
@@ -362,53 +430,102 @@ Widget _buildSourceButton(BuildContext context) {
   final isDarkMode = Theme.of(context).brightness == Brightness.dark;
   final topResults = message.searchResults!.take(3).toList();
 
-  return GestureDetector(
-    onTap: () => _showSearchResults(context),
-    child: Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        border: Border.all(color: isDarkMode ? Colors.grey[700]! : Colors.grey[400]!),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '資料來源',
-            style: TextStyle(
-              color: isDarkMode ? Colors.white : Colors.grey[800],
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(width: 8),
-          ...topResults.map((result) {
-            final uri = Uri.parse(result.url);
-            final favicon = 'https://www.google.com/s2/favicons?domain=${uri.host}';
-            
-            return Container(
-              margin: const EdgeInsets.only(right: 4),
-              width: 20,
-              height: 20,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: Image.network(
-                  favicon,
-                  width: 20,
-                  height: 20,
-                  errorBuilder: (context, error, stackTrace) => Icon(
-                    Icons.public,
-                    size: 16,
-                    color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                ),
+  return Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: () => _showSearchResults(context),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          border: Border.all(color: isDarkMode ? Colors.grey[700]! : Colors.grey[400]!),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '資料來源',
+              style: TextStyle(
+                color: isDarkMode ? Colors.white : Colors.grey[800],
+                fontSize: 14,
               ),
-            );
-          }).toList(),
-        ],
+            ),
+            const SizedBox(width: 8),
+            ...topResults.map((result) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: _buildSourceIcon(context, result, isDarkMode),
+              );
+            }).toList(),
+          ],
+        ),
       ),
     ),
   );
+}
+
+// 添加輔助方法來建構源圖標
+Widget _buildSourceIcon(BuildContext context, SearchResult result, bool isDarkMode) {
+  IconData iconData;
+  Color color;
+  
+  switch (result.engine.toLowerCase()) {
+    case 'nvidia':
+      iconData = Icons.memory;
+      color = Colors.green;
+      break;
+    case 'proxmox':
+      iconData = Icons.storage;
+      color = Colors.orange;
+      break;
+    case 'cloud':
+      iconData = Icons.cloud;
+      color = Colors.blue;
+      break;
+    case 'web':
+      iconData = Icons.web;
+      color = Colors.purple;
+      break;
+    default:
+      iconData = Icons.public;
+      color = Colors.blue;
+  }
+
+  if (kIsWeb) {
+    // Web平台使用圖標
+    return Icon(
+      iconData,
+      size: 16,
+      color: color,
+    );
+  } else {
+    // 非Web平台嘗試使用favicon
+    final uri = Uri.parse(result.url);
+    final favicon = 'https://www.google.com/s2/favicons?domain=${uri.host}';
+    
+    return Container(
+      width: 20,
+      height: 20,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: Image.network(
+          favicon,
+          width: 20,
+          height: 20,
+          errorBuilder: (context, error, stackTrace) => Icon(
+            iconData,
+            size: 16,
+            color: isDarkMode ? color.withOpacity(0.8) : color,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
   void _showImageViewer(BuildContext context, String imagePath, bool isNetworkImage) {
@@ -425,85 +542,136 @@ Widget _buildSourceButton(BuildContext context) {
     );
   }
 
+// 修改 _buildImageWidget 方法
 Widget _buildImageWidget(String imagePath, bool isNetworkImage) {
-    if (isNetworkImage) {
-      // 從 Provider 中獲取 userId
-      return Consumer<AuthProvider>(
-        builder: (context, authProvider, child) {
-          return Image.network(
-            '${Env.conversationApiUrl}$imagePath',
-            width: 200,
-            height: 200,
-            fit: BoxFit.cover,
-            headers: {
-              'x-user-id': authProvider.userId ?? '',  // 添加 userId 到請求頭
-            },
-            errorBuilder: (context, error, stackTrace) {
-              debugPrint('Error loading network image: $error');
-              return SizedBox(
-                width: 200,
-                height: 200,
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.error_outline,
-                        color: Colors.grey[400],
-                        size: 32,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '無法載入圖片',
-                        style: TextStyle(
-                          color: Colors.grey[400],
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          );
-        }
-      );
-    } else {
-      return Image.file(
-        File(imagePath),
+  // 檢查是否為 base64 圖片
+  if (imagePath.startsWith('data:image')) {
+    try {
+      // 解析 base64 圖片
+      final startIndex = imagePath.indexOf(',') + 1;
+      final bytes = base64Decode(imagePath.substring(startIndex));
+      return Image.memory(
+        bytes,
         width: 200,
         height: 200,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
-          debugPrint('Error loading local image: $error');
-          return SizedBox(
-            width: 200,
-            height: 200,
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    color: Colors.grey[400],
-                    size: 32,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '無法載入圖片',
-                    style: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
+          debugPrint('Error loading base64 image: $error');
+          return _buildErrorBox();
         },
       );
+    } catch (e) {
+      debugPrint('Error decoding base64 image: $e');
+      return _buildErrorBox();
     }
   }
+
+  // 網絡圖片處理
+  if (isNetworkImage) {
+    return Consumer<AuthProvider>(
+      builder: (context, authProvider, child) {
+        return Image.network(
+          '${Env.conversationApiUrl}$imagePath',
+          width: 200,
+          height: 200,
+          fit: BoxFit.cover,
+          headers: {
+            'x-user-id': authProvider.userId ?? '',
+          },
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Error loading network image: $error');
+            return _buildErrorBox();
+          },
+        );
+      }
+    );
+  } 
+  
+  // Web 平台處理
+  if (kIsWeb) {
+    return Consumer<ChatProvider>(
+      builder: (context, chatProvider, child) {
+        final imageData = chatProvider.getImageData(imagePath);
+        if (imageData != null) {
+          return Image.memory(
+            imageData.bytes,
+            width: 200,
+            height: 200,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint('Error loading web image: $error');
+              return _buildErrorBox();
+            },
+          );
+        }
+        return _buildErrorBox();
+      },
+    );
+  }
+  
+  // 移動平台處理本地文件
+  try {
+    return Image.file(
+      File(imagePath),
+      width: 200,
+      height: 200,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        // 如果本地文件讀取失敗，嘗試從 Provider 獲取緩存數據
+        return Consumer<ChatProvider>(
+          builder: (context, chatProvider, child) {
+            final imageData = chatProvider.getImageData(imagePath);
+            if (imageData != null) {
+              return Image.memory(
+                imageData.bytes,
+                width: 200,
+                height: 200,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  debugPrint('Error loading cached image: $error');
+                  return _buildErrorBox();
+                },
+              );
+            }
+            debugPrint('Error loading local image: $error');
+            return _buildErrorBox();
+          },
+        );
+      },
+    );
+  } catch (e) {
+    debugPrint('Error handling local image: $e');
+    return _buildErrorBox();
+  }
+}
+
+// 添加一個輔助方法來建立錯誤提示框
+Widget _buildErrorBox() {
+  return SizedBox(
+    width: 200,
+    height: 200,
+    child: Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.error_outline,
+            color: Colors.grey[400],
+            size: 32,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '無法載入圖片',
+            style: TextStyle(
+              color: Colors.grey[400],
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
 @override
 Widget build(BuildContext context) {

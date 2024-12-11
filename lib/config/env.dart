@@ -23,7 +23,8 @@ class Env {
   static String get chatCompletionsWsUrl => 'ws://chatnlm.api.infinirc.com/v1/chat/completions';
   
   // Search endpoints (保持現有的不變)
-  static const String searchApiUrl = 'https://search.infinirc.com';
+  // 更新搜索 API URL
+static const String searchApiUrl = 'https://chatnlm-search.api.infinirc.com';
   static String searchEndpoint(String query) => '$searchApiUrl/search?q=$query&format=json';
   
   // Voice endpoints (保持現有的不變)

@@ -428,50 +428,90 @@ Widget _buildSourceButton(BuildContext context) {
   final isDarkMode = Theme.of(context).brightness == Brightness.dark;
   final topResults = message.searchResults!.take(3).toList();
 
-  return GestureDetector(
-    onTap: () => _showSearchResults(context),
-    child: Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        border: Border.all(color: isDarkMode ? Colors.grey[700]! : Colors.grey[400]!),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '資料來源',
-            style: TextStyle(
-              color: isDarkMode ? Colors.white : Colors.grey[800],
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(width: 8),
-          ...topResults.map((result) {
-            final uri = Uri.parse(result.url);
-            final favicon = 'https://www.google.com/s2/favicons?domain=${uri.host}';
-            
-            return Container(
-              margin: const EdgeInsets.only(right: 4),
-              width: 20,
-              height: 20,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: Image.network(
-                  favicon,
-                  width: 20,
-                  height: 20,
-                  errorBuilder: (context, error, stackTrace) => Icon(
-                    Icons.public,
-                    size: 16,
-                    color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                ),
+  return Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: () => _showSearchResults(context),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          border: Border.all(color: isDarkMode ? Colors.grey[700]! : Colors.grey[400]!),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '資料來源',
+              style: TextStyle(
+                color: isDarkMode ? Colors.white : Colors.grey[800],
+                fontSize: 14,
               ),
-            );
-          }).toList(),
-        ],
+            ),
+            const SizedBox(width: 8),
+            ...topResults.map((result) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: _buildSourceIcon(context, result, isDarkMode),
+              );
+            }).toList(),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+// 添加輔助方法來建構源圖標
+Widget _buildSourceIcon(BuildContext context, SearchResult result, bool isDarkMode) {
+  IconData iconData;
+  Color color;
+  
+  // 先設置預設圖標和顏色
+  switch (result.engine.toLowerCase()) {
+    case 'nvidia':
+      iconData = Icons.memory;
+      color = Colors.green;
+      break;
+    case 'proxmox':
+      iconData = Icons.storage;
+      color = Colors.orange;
+      break;
+    case 'cloud':
+      iconData = Icons.cloud;
+      color = Colors.blue;
+      break;
+    case 'web':
+      iconData = Icons.web;
+      color = Colors.purple;
+      break;
+    default:
+      iconData = Icons.public;
+      color = Colors.blue;
+  }
+
+  final uri = Uri.parse(result.url);
+  final favicon = result.favicon ?? 'https://www.google.com/s2/favicons?domain=${uri.host}';
+  
+  return Container(
+    width: 20,
+    height: 20,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.network(
+        favicon,
+        width: 20,
+        height: 20,
+        errorBuilder: (context, error, stackTrace) => Icon(
+          iconData,
+          size: 16,
+          color: isDarkMode ? color.withOpacity(0.8) : color,
+        ),
       ),
     ),
   );

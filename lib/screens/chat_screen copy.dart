@@ -736,7 +736,7 @@ return RefreshIndicator(
       final group = groups[groupIndex];
       // 其餘列表項渲染代碼保持不變...
       return KeepAlive(
-        key: ValueKey('group_${group.title}'),
+        key: ValueKey('group_${group.title}_${groupIndex}_${DateTime.now().microsecondsSinceEpoch}'),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

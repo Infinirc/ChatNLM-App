@@ -451,17 +451,19 @@ Future<void> loadConversationMessages(String conversationId) async {
     _messages.clear();
     _currentConversationId = conversationId;
     
-    if (isTrialMode) {
-      // 從本地加載消息
-      final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-      final localMessages = conversationProvider.getLocalMessages(conversationId);
-      if (localMessages != null && localMessages.isNotEmpty) {
-        _messages.addAll(localMessages);
-        debugPrint('Loaded ${localMessages.length} messages from local storage');
-      }
-      notifyListeners();
-      return;
-    }
+if (isTrialMode) {
+  // 從本地加載消息
+  final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+  final localMessages = conversationProvider.getLocalMessages(conversationId);
+  if (localMessages != null && localMessages.isNotEmpty) {
+    _messages.addAll(localMessages);
+    // 確保按照時間戳降序排序（新的在前）
+    _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    debugPrint('Loaded ${localMessages.length} messages from local storage');
+  }
+  notifyListeners();
+  return;
+}
 
     // 非試用模式的正常加載邏輯
     final response = await http.get(
@@ -739,8 +741,8 @@ if (images != null && images.isNotEmpty) {
       messageContent.add({'type': 'text', 'text': trimmedContent});
     }
 
-    // 創建用戶消息
-// 創建用戶消息
+final timestamp = DateTime.now();
+
 final userMessage = Message(
   id: isTrialMode ? 'trial_${DateTime.now().millisecondsSinceEpoch}' : null,
   content: trimmedContent,
@@ -912,55 +914,39 @@ _currentGeneration = _channel!.stream.listen(
 Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? searchResults) async {
   try {
     debugPrint('Handling message completion');
-    _messages[0] = _messages[0].copyWith(
+    
+    // 更新AI消息內容
+    final aiMessage = _messages[0].copyWith(
       content: currentContent,
       isComplete: true,
       searchResults: searchResults,
     );
-
-    final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
     
+    // 試用模式下
     if (isTrialMode) {
-      // 在試用模式下保存到本地
+      final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      
+      // 先保存更新後的AI消息
       await conversationProvider.saveLocalMessage(
         _currentConversationId!,
-        _messages[0]
+        aiMessage
       );
-    } else {
-      await conversationProvider.saveMessage(_messages[0]);
-
-      final response = await http.get(
-        Uri.parse('${_conversationUrl}/conversations/$_currentConversationId/messages'),
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': Provider.of<AuthProvider>(context, listen: false).userId ?? '',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final List<dynamic> messages = json.decode(response.body);
-        final savedMessage = messages.firstWhere(
-          (msg) => 
-            msg['content'] == currentContent && 
-            msg['role'] == 'assistant' &&
-            msg['isComplete'] == true &&
-            DateTime.parse(msg['timestamp']).isAfter(
-              DateTime.now().subtract(const Duration(minutes: 1))
-            ),
-          orElse: () => null,
-        );
-
-        if (savedMessage != null) {
-          _messages[0] = Message.fromJson(savedMessage).copyWith(
-            content: currentContent,
-            isComplete: true,
-            searchResults: searchResults,
-          );
-        }
+      
+      // 重新從本地加載所有消息以確保順序
+      final localMessages = conversationProvider.getLocalMessages(_currentConversationId!);
+      if (localMessages != null) {
+        _messages.clear();
+        _messages.addAll(localMessages);
+        _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
       }
+    } else {
+      // 非試用模式保持原有邏輯
+      _messages[0] = aiMessage;
+      final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      await conversationProvider.saveMessage(_messages[0]);
     }
 
-    // 確保關閉當前 WebSocket 連接
+    // 確保關閉WebSocket連接
     _isGenerating = false;
     if (_channel != null) {
       await _channel!.sink.close();
@@ -968,7 +954,7 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
       _isConnected = false;
     }
     
-    // 生成標題前確保舊連接已關閉
+    // 生成標題
     if (_messages.length == 2) {
       debugPrint('Preparing to generate title');
       await Future.delayed(const Duration(milliseconds: 200));
@@ -980,6 +966,8 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
         );
       }
     }
+
+    notifyListeners();
   } catch (e) {
     debugPrint('Error in _handleMessageComplete: $e');
   } finally {

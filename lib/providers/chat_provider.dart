@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
+import '../managers/message_rating_manager.dart';
 
 
 class ImageData {
@@ -330,109 +331,9 @@ Future<void> _handleTitleComplete(String title) async {
     }
   }
 
-Future<void> rateMessage(String messageId, String rating) async {
-  try {
-    if (_currentConversationId == null) return;
 
-    debugPrint('Rating message with id: $messageId (Trial Mode: $isTrialMode)');
-    
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    
-    final index = _messages.indexWhere((msg) => msg.id == messageId);
-    if (index == -1) {
-      debugPrint('Message not found locally');
-      return;
-    }
-
-    // 使用 userId 和 version 組合作為評分的唯一標識
-    final userId = authProvider.userId ?? '';
-    final currentVersion = _messages[index].currentVersion.toString();
-    final ratingKey = '${userId}_$currentVersion';
-    
-    // 準備當前的評分數據
-    Map<String, dynamic> currentRatings = 
-        Map<String, dynamic>.from(_messages[index].userRating ?? {});
-    
-    // 檢查是否需要取消評分
-    if (currentRatings[ratingKey] == rating) {
-      currentRatings.remove(ratingKey);
-    } else {
-      currentRatings[ratingKey] = rating;
-    }
-    
-    // 立即更新本地狀態
-    _messages[index] = _messages[index].copyWith(
-      userRating: currentRatings.isEmpty ? null : currentRatings
-    );
-    notifyListeners();
-
-    if (isTrialMode) {
-      return;
-    }
-
-    final mongoId = messageId.length == 24 ? messageId : _messages[index].id;
-    
-    final response = await http.post(
-      Uri.parse('$_conversationUrl/conversations/$_currentConversationId/messages/$mongoId/rate'),
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': userId,
-      },
-      body: json.encode({
-        'rating': rating,
-        'version': currentVersion  // 添加版本信息
-      }),
-    );
-
-    if (response.statusCode == 404) {
-      debugPrint('Message not found on server, reloading conversation...');
-      await loadConversationMessages(_currentConversationId!);
-      
-      final newMessage = _messages.firstWhere(
-        (msg) => msg.timestamp.isAtSameMomentAs(_messages[index].timestamp) && 
-                 msg.role == _messages[index].role && 
-                 msg.content == _messages[index].content,
-        orElse: () => _messages[index],
-      );
-      
-      if (newMessage.id != messageId) {
-        debugPrint('Found message with new id: ${newMessage.id}');
-        await rateMessage(newMessage.id, rating);
-      }
-    } else if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      
-      if (data['userRating'] != null) {
-        final Map<String, dynamic> serverRatings = Map<String, dynamic>.from(data['userRating']);
-        currentRatings = _messages[index].userRating ?? {};
-        
-        if (serverRatings.isEmpty) {
-          currentRatings.remove(ratingKey);
-          if (currentRatings.isEmpty) {
-            currentRatings = {};
-          }
-        } else {
-          serverRatings.forEach((userId, rating) {
-            currentRatings[ratingKey] = rating;
-          });
-        }
-        
-        _messages[index] = _messages[index].copyWith(
-          userRating: currentRatings.isEmpty ? null : currentRatings
-        );
-        notifyListeners();
-      }
-      
-      debugPrint('Rating updated successfully. New ratings: ${data['userRating']}');
-    } else {
-      debugPrint('Rating failed: ${response.statusCode}, ${response.body}');
-      await loadConversationMessages(_currentConversationId!);
-    }
-  } catch (e) {
-    debugPrint('Error rating message: $e');
-  }
-}
 Future<void> loadConversationMessages(String conversationId) async {
+
   if (_isLoadingMessages) {
     return;
   }
@@ -448,24 +349,102 @@ Future<void> loadConversationMessages(String conversationId) async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     debugPrint('Loading messages for user: ${authProvider.userId}');
     
+    // 保存當前消息的版本信息
+    Map<String, int> currentVersions = {};
+    for (var msg in _messages) {
+      if (msg.id != null) {
+        currentVersions[msg.id!] = msg.currentVersion;
+      }
+    }
+    debugPrint('Saved current versions: $currentVersions');
+    
     _messages.clear();
     _currentConversationId = conversationId;
     
-if (isTrialMode) {
-  // 從本地加載消息
-  final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-  final localMessages = conversationProvider.getLocalMessages(conversationId);
-  if (localMessages != null && localMessages.isNotEmpty) {
-    _messages.addAll(localMessages);
-    // 確保按照時間戳降序排序（新的在前）
-    _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    debugPrint('Loaded ${localMessages.length} messages from local storage');
-  }
-  notifyListeners();
-  return;
-}
+    if (isTrialMode) {
+      final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      final localMessages = conversationProvider.getLocalMessages(conversationId);
+      
+      if (localMessages != null && localMessages.isNotEmpty) {
+        final Map<String, Message> latestMessages = {};
+        
+        for (var message in localMessages) {
+          final key = '${message.role}_${message.timestamp.millisecondsSinceEpoch}';
+          
+          if (latestMessages.containsKey(key)) {
+            final existingMessage = latestMessages[key]!;
+            
+            List<String> versions = [];
+            if (existingMessage.contentVersions != null) {
+              versions = List<String>.from(existingMessage.contentVersions!);
+            } else {
+              versions = [existingMessage.content];
+            }
+            
+            if (!versions.contains(message.content)) {
+              versions.add(message.content);
+            }
+            
+            // 使用保存的版本號或默認值
+            int versionToUse = message.id != null && currentVersions.containsKey(message.id!) 
+                ? currentVersions[message.id!]!
+                : message.currentVersion;
+                
+            // 確保版本號有效
+            versionToUse = versionToUse.clamp(0, versions.length - 1);
+            
+            latestMessages[key] = message.copyWith(
+              contentVersions: versions,
+              currentVersion: versionToUse,
+              content: versions[versionToUse],  // 確保內容與版本匹配
+              userRating: message.userRating ?? existingMessage.userRating
+            );
+            
+            debugPrint('Updated message:');
+            debugPrint('- ID: ${message.id}');
+            debugPrint('- Versions: ${versions.length}');
+            debugPrint('- Current version: $versionToUse');
+            debugPrint('- Content: ${versions[versionToUse]}');
+          } else {
+            final versions = message.contentVersions ?? [message.content];
+            // 同樣使用保存的版本號
+            int versionToUse = message.id != null && currentVersions.containsKey(message.id!)
+                ? currentVersions[message.id!]!
+                : versions.length - 1;
+            
+            versionToUse = versionToUse.clamp(0, versions.length - 1);
+            
+            latestMessages[key] = message.copyWith(
+              contentVersions: versions,
+              currentVersion: versionToUse,
+              content: versions[versionToUse]
+            );
+            
+            debugPrint('Added new message:');
+            debugPrint('- ID: ${message.id}');
+            debugPrint('- Versions: ${versions.length}');
+            debugPrint('- Current version: $versionToUse');
+          }
+        }
+        
+        _messages.addAll(latestMessages.values);
+        _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        
+        debugPrint('Loaded ${_messages.length} messages with version history');
+        for (var msg in _messages) {
+          debugPrint('Message summary:');
+          debugPrint('- ID: ${msg.id}');
+          debugPrint('- Versions: ${msg.contentVersions?.length}');
+          debugPrint('- Current version: ${msg.currentVersion}');
+          debugPrint('- Content: ${msg.content}');
+        }
+      }
+      
+      notifyListeners();
+      return;
+    }
 
-    // 非試用模式的正常加載邏輯
+
     final response = await http.get(
       Uri.parse(Env.conversationMessagesUrl(conversationId)),
       headers: {
@@ -481,25 +460,24 @@ if (isTrialMode) {
       final Map<String, Message> latestMessages = {};
       
       for (var json in data) {
-        // 處理評分數據格式
+        debugPrint('Processing message: ${json['_id']} with rating: ${json['userRating']}');
+        
         if (json['userRating'] != null) {
           final userId = authProvider.userId ?? '';
           final currentVersion = json['currentVersion']?.toString() ?? '0';
           final ratingKey = '${userId}_$currentVersion';
           
           if (json['userRating'] is Map) {
-            final serverRating = Map<String, dynamic>.from(json['userRating']);
-            if (serverRating.containsKey(userId)) {
-              json['userRating'] = {
-                ratingKey: serverRating[userId]
-              };
-            }
+            json['userRating'] = Map<String, dynamic>.from(json['userRating']);
+            Provider.of<MessageRatingManager>(context, listen: false)
+                .updateRatingCache(json['_id'], json['userRating']);
           } else if (json['userRating'] is String) {
-            json['userRating'] = {
-              ratingKey: json['userRating']
-            };
+            final ratingData = {ratingKey: json['userRating']};
+            json['userRating'] = ratingData;
+            Provider.of<MessageRatingManager>(context, listen: false)
+                .updateRatingCache(json['_id'], ratingData);
           }
-          debugPrint('Processed rating for message: ${json['userRating']}');
+          debugPrint('Processed rating data: ${json['userRating']}');
         }
 
         final message = Message.fromJson(json);
@@ -509,8 +487,7 @@ if (isTrialMode) {
           final existingMessage = latestMessages[key]!;
           if (message.contentVersions != null && 
               message.currentVersion > (existingMessage.contentVersions?.length ?? -1)) {
-            final Map<String, dynamic> mergedRatings = 
-              Map<String, dynamic>.from(existingMessage.userRating ?? {});
+            final mergedRatings = Map<String, dynamic>.from(existingMessage.userRating ?? {});
             if (message.userRating != null) {
               mergedRatings.addAll(message.userRating!);
             }
@@ -518,6 +495,7 @@ if (isTrialMode) {
             latestMessages[key] = message.copyWith(
               userRating: mergedRatings.isEmpty ? null : mergedRatings
             );
+            debugPrint('Updated message with merged ratings: $mergedRatings');
           }
         } else {
           latestMessages[key] = message;
@@ -813,7 +791,7 @@ if (isTrialMode) {
           result.content.isNotEmpty
         ).toList();
         
-        systemPrompt += '根據以上資訊，我來回答你的問題：\n';
+        systemPrompt += '根據以上資訊，參考多一點資訊，來回答你的問題，且要是最新資訊，詳細一點可以列點：\n';
 
         _messages[0] = _messages[0].copyWith(
           content: '🤔 正在根據搜尋結果生成回答...',
@@ -913,40 +891,118 @@ _currentGeneration = _channel!.stream.listen(
 
 Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? searchResults) async {
   try {
-    debugPrint('Handling message completion');
+    debugPrint('處理訊息完成');
     
-    // 更新AI消息內容
-    final aiMessage = _messages[0].copyWith(
-      content: currentContent,
-      isComplete: true,
-      searchResults: searchResults,
-    );
-    
-    // 試用模式下
     if (isTrialMode) {
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      final existingMessages = conversationProvider.getLocalMessages(_currentConversationId!);
       
-      // 先保存更新後的AI消息
-      await conversationProvider.saveLocalMessage(
-        _currentConversationId!,
-        aiMessage
-      );
-      
-      // 重新從本地加載所有消息以確保順序
-      final localMessages = conversationProvider.getLocalMessages(_currentConversationId!);
-      if (localMessages != null) {
-        _messages.clear();
-        _messages.addAll(localMessages);
-        _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      if (existingMessages != null) {
+        // 找到當前正在處理的訊息
+        final messageToUpdate = _messages[0];
+        final existingMessage = existingMessages.firstWhere(
+          (m) => m.timestamp.isAtSameMomentAs(messageToUpdate.timestamp) && m.role == messageToUpdate.role,
+          orElse: () => messageToUpdate,
+        );
+        
+        // 準備版本資訊
+        List<String> versions = [];
+        
+        // 如果已有版本歷史，則保留
+        if (existingMessage.contentVersions != null) {
+          versions = List<String>.from(existingMessage.contentVersions!);
+        } else if (existingMessage.content.isNotEmpty) {
+          // 如果沒有版本歷史但有內容，將其作為第一個版本
+          versions = [existingMessage.content];
+        }
+        
+        // 只有當新內容不存在於版本歷史中時才添加
+        if (!versions.contains(currentContent)) {
+          versions.add(currentContent);
+          debugPrint('添加新版本：${versions.length}，內容長度：${currentContent.length}');
+        }
+        
+        // 建立更新後的訊息，保持原有的 id
+        final updatedMessage = Message(
+          id: existingMessage.id,  // 直接使用現有消息的 id
+          content: currentContent,
+          isUser: false,
+          timestamp: existingMessage.timestamp,
+          role: 'assistant',
+          contentVersions: versions,
+          currentVersion: versions.length - 1,
+          isComplete: true,
+          searchResults: searchResults,
+          userRating: existingMessage.userRating,
+        );
+        
+        debugPrint('更新訊息：版本數量=${versions.length}，當前版本=${versions.length - 1}');
+        
+        // 保存更新後的訊息
+        await conversationProvider.saveLocalMessage(
+          _currentConversationId!,
+          updatedMessage
+        );
+        
+        // 更新本地訊息列表
+        _messages[0] = updatedMessage;
+        
+        // 重新載入所有訊息以確保順序正確
+        final allMessages = conversationProvider.getLocalMessages(_currentConversationId!);
+        if (allMessages != null) {
+          _messages.clear();
+          _messages.addAll(allMessages);
+          _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          debugPrint('重新載入本地訊息：${_messages.length} 條');
+        }
+      } else {
+        // 如果是全新的訊息，創建初始版本
+        final newMessage = _messages[0].copyWith(
+          content: currentContent,
+          contentVersions: [currentContent],
+          currentVersion: 0,
+          isComplete: true,
+          searchResults: searchResults,
+        );
+        
+        await conversationProvider.saveLocalMessage(
+          _currentConversationId!,
+          newMessage
+        );
+        
+        _messages[0] = newMessage;
+        debugPrint('創建新訊息：版本=1');
       }
     } else {
-      // 非試用模式保持原有邏輯
-      _messages[0] = aiMessage;
+      // 保持原有的非試用模式邏輯不變
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      final response = await http.post(
+        Uri.parse('${_conversationUrl}/conversations/$_currentConversationId/messages'),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': Provider.of<AuthProvider>(context, listen: false).userId ?? '',
+        },
+        body: json.encode(_messages[0].copyWith(
+          content: currentContent,
+          isComplete: true,
+          searchResults: searchResults,
+        ).toJson()),
+      );
+      
+      if (response.statusCode == 200) {
+        final savedMessageData = json.decode(response.body);
+        final savedMessage = Message.fromJson(savedMessageData);
+        _messages[0] = savedMessage.copyWith(
+          content: currentContent,
+          isComplete: true,
+          searchResults: searchResults,
+        );
+      }
+      
       await conversationProvider.saveMessage(_messages[0]);
     }
 
-    // 確保關閉WebSocket連接
+    // 關閉 WebSocket 連接
     _isGenerating = false;
     if (_channel != null) {
       await _channel!.sink.close();
@@ -954,12 +1010,12 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
       _isConnected = false;
     }
     
-    // 生成標題
+    // 處理標題生成
     if (_messages.length == 2) {
-      debugPrint('Preparing to generate title');
+      debugPrint('準備生成標題');
       await Future.delayed(const Duration(milliseconds: 200));
       if (_messages[0].isComplete && _messages[1].content.isNotEmpty) {
-        debugPrint('Starting title generation');
+        debugPrint('開始生成標題');
         await _generateTitle(
           _messages[1].content,
           currentContent,
@@ -969,7 +1025,7 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
 
     notifyListeners();
   } catch (e) {
-    debugPrint('Error in _handleMessageComplete: $e');
+    debugPrint('處理訊息完成時發生錯誤：$e');
   } finally {
     _isGenerating = false;
     notifyListeners();
@@ -1164,27 +1220,41 @@ Future<List<SearchResult>> _performSearch(String query) async {
     return [];
   }
 }
-void switchMessageVersion(String messageId, int version) {
+void switchMessageVersion(String messageId, int version) async {
+  debugPrint('切換消息版本：messageId=$messageId, version=$version');
+  
   final index = _messages.indexWhere((msg) => msg.id == messageId);
   if (index != -1 && _messages[index].contentVersions != null) {
     if (version >= 0 && version < _messages[index].contentVersions!.length) {
       // 保存當前的評分數據
       final currentRatings = _messages[index].userRating;
       
+      // 更新消息但保持版本列表不變
       _messages[index] = _messages[index].copyWith(
         content: _messages[index].contentVersions![version],
         currentVersion: version,
-        userRating: currentRatings,  // 保持評分數據
+        userRating: currentRatings,
       );
       notifyListeners();
       
-      // 保存到服務器
-      try {
+      // 在試用模式下更新本地存儲
+      if (isTrialMode) {
+        final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+        await conversationProvider.saveLocalMessage(
+          _currentConversationId!,
+          _messages[index],
+          updateVersions: false  // 不更新版本列表，只更新當前版本
+        );
+      } else {
+        // 非試用模式的保存邏輯
         final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
         conversationProvider.saveMessage(_messages[index]);
-      } catch (e) {
-        debugPrint('Error saving message version: $e');
       }
+      
+      debugPrint('版本切換完成：');
+      debugPrint('- 當前版本: $version');
+      debugPrint('- 總版本數: ${_messages[index].contentVersions!.length}');
+      debugPrint('- 評分數據: $currentRatings');
     }
   }
 }
@@ -1359,82 +1429,145 @@ Future<void> _handleRegenerationComplete(
   String? oldVersionRating
 ) async {
   try {
-    // 添加新版本
-    versions.add(currentContent);
-    
-    // 更新消息
-    _messages[index] = _messages[index].copyWith(
+    debugPrint('Starting regeneration completion');
+    debugPrint('Current rating data: $currentRating');
+    debugPrint('Old version rating: $oldVersionRating');
+
+    // 處理評分數據
+    Map<String, dynamic> updatedRating = {};
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+    // 保存現有評分
+    if (currentRating != null) {
+      updatedRating.addAll(currentRating);
+      debugPrint('Preserved existing ratings: $updatedRating');
+    }
+
+    // 添加新的版本
+    if (!versions.contains(currentContent)) {
+      versions.add(currentContent);
+      debugPrint('Added new version ${versions.length - 1}');
+    }
+
+    // 為新版本設置評分
+    if (oldVersionRating != null) {
+      final newVersionKey = '${authProvider.userId}_${versions.length - 1}';
+      updatedRating[newVersionKey] = oldVersionRating;
+      debugPrint('Added rating for new version: $newVersionKey = $oldVersionRating');
+    }
+
+    // 創建更新後的消息
+    final updatedMessage = Message(
+      id: _messages[index].id,
       content: currentContent,
-      isComplete: true,
       contentVersions: versions,
       currentVersion: versions.length - 1,
-      userRating: currentRating,
+      isComplete: true,
+      isUser: _messages[index].isUser,
+      role: _messages[index].role,
+      timestamp: _messages[index].timestamp,
+      userRating: updatedRating.isNotEmpty ? updatedRating : null,
+      searchResults: _messages[index].searchResults,
+      images: _messages[index].images
     );
 
-    // 保存到服务器
-    if (!isTrialMode) {
+    if (isTrialMode) {
+      // 試用模式處理
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-      await conversationProvider.saveMessage(_messages[index]);
+      
+      // 保存到本地存儲
+      await conversationProvider.saveLocalMessage(
+        _currentConversationId!,
+        updatedMessage,
+        updateVersions: true,    // 更新版本列表
 
-      await Future.delayed(const Duration(milliseconds: 100));
-
-      // 获取保存的消息
-      final response = await http.get(
+      );
+      
+      // 重新載入消息
+      final localMessages = conversationProvider.getLocalMessages(_currentConversationId!);
+      if (localMessages != null) {
+        _messages.clear();
+        _messages.addAll(localMessages);
+        _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        
+        debugPrint('Reloaded messages in trial mode:');
+        for (var msg in _messages) {
+          debugPrint('Message ${msg.id}:');
+          debugPrint('- Content: ${msg.content}');
+          debugPrint('- Versions: ${msg.contentVersions?.length ?? 0}');
+          debugPrint('- Current version: ${msg.currentVersion}');
+          debugPrint('- Ratings: ${msg.userRating}');
+        }
+      }
+    } else {
+      // 非試用模式處理
+      final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      
+      // 保存到服務器
+      final response = await http.post(
         Uri.parse('${_conversationUrl}/conversations/$_currentConversationId/messages'),
         headers: {
           'Content-Type': 'application/json',
-          'x-user-id': Provider.of<AuthProvider>(context, listen: false).userId ?? '',
+          'x-user-id': authProvider.userId ?? '',
         },
+        body: json.encode(updatedMessage.toJson()),
       );
 
       if (response.statusCode == 200) {
-        final List<dynamic> messages = json.decode(response.body);
-        final savedMessage = messages.firstWhere(
-          (msg) => 
-            msg['content'] == currentContent && 
-            msg['role'] == 'assistant' &&
-            msg['currentVersion'] == versions.length - 1,
-          orElse: () => null,
-        );
-
-        if (savedMessage != null) {
-          _messages[index] = Message.fromJson(savedMessage).copyWith(
-            content: currentContent,
-            isComplete: true,
-            contentVersions: versions,
-            currentVersion: versions.length - 1,
-            userRating: currentRating,
-          );
-          
-          // 如果原版本有評分，應用到新版本
-          if (oldVersionRating != null) {
-            final newVersion = (versions.length - 1).toString();
-            Map<String, dynamic> newRatings = Map<String, dynamic>.from(currentRating ?? {});
-            newRatings[newVersion] = oldVersionRating;
-            await rateMessage(_messages[index].id, oldVersionRating);
-          }
+        final savedMessageData = json.decode(response.body);
+        debugPrint('Server response: ${json.encode(savedMessageData)}');
+        
+        // 更新消息管理器中的評分緩存
+        if (savedMessageData['userRating'] != null) {
+          Provider.of<MessageRatingManager>(context, listen: false)
+            .updateRatingCache(savedMessageData['_id'], savedMessageData['userRating']);
         }
+        
+        // 從服務器數據更新消息
+        final savedMessage = Message.fromJson(savedMessageData).copyWith(
+          content: currentContent,
+          isComplete: true,
+          contentVersions: versions,
+          currentVersion: versions.length - 1,
+          userRating: savedMessageData['userRating'] ?? updatedRating
+        );
+        
+        _messages[index] = savedMessage;
+        debugPrint('Updated message from server response');
+      } else {
+        // 如果保存失敗，至少更新本地狀態
+        _messages[index] = updatedMessage;
+        debugPrint('Server save failed, updated local state only');
       }
+      
+      await conversationProvider.saveMessage(_messages[index]);
     }
 
-    // 如果是第一條消息且只有兩條消息，重新生成標題
+    // 如果是對話中的第一條消息，重新生成標題
     if (index == 0 && _messages.length == 2) {
-      debugPrint('Regenerating title after response update');
+      debugPrint('Regenerating title');
       await Future.delayed(const Duration(milliseconds: 100));
       await _generateTitle(
         _messages[1].content,
-        _messages[0].content,
+        currentContent
       );
     }
+
   } catch (e) {
-    debugPrint('Error handling regeneration complete: $e');
+    debugPrint('Error handling regeneration completion: $e');
+    // 錯誤處理時也保持消息狀態一致
+    _messages[index] = _messages[index].copyWith(
+      isComplete: true,
+      contentVersions: versions,
+      currentVersion: versions.length - 1,
+      userRating: currentRating
+    );
   } finally {
     _isGenerating = false;
     _currentGeneration = null;
     notifyListeners();
   }
 }
-
 // 處理重新生成錯誤
 Future<void> _handleRegenerationError(
   int index,

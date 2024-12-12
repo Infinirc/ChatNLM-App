@@ -1,4 +1,7 @@
 // lib/models/search_result.dart
+import 'package:flutter/foundation.dart';
+import '../config/env.dart';
+
 class SearchResult {
   final String url;
   final String title;
@@ -19,7 +22,6 @@ class SearchResult {
   });
 
 factory SearchResult.fromJson(Map<String, dynamic> json) {
-  // 確保所有必要欄位都存在且有效
   if (json['url'] == null || 
       json['title'] == null || 
       json['content'] == null ||
@@ -29,6 +31,24 @@ factory SearchResult.fromJson(Map<String, dynamic> json) {
   }
 
   final uri = Uri.parse(json['url']);
+  String? faviconUrl;
+  
+  if (!['langchain', 'nvidia', 'proxmox'].contains(json['engine'].toString().toLowerCase())) {
+    final baseUrl = '${Env.searchApiUrl}/search/favicon';
+    final params = {
+      'domain': uri.host,
+      if (kIsWeb) ...{
+        'platform': 'web',
+        't': DateTime.now().millisecondsSinceEpoch.toString(),
+        'origin': Uri.base.origin,
+      },
+    };
+    
+    final faviconUri = Uri.parse(baseUrl).replace(queryParameters: params);
+    faviconUrl = faviconUri.toString();
+    debugPrint('Generated favicon URL: $faviconUrl');
+  }
+
   return SearchResult(
     url: json['url'] as String,
     title: json['title'] as String,
@@ -36,11 +56,10 @@ factory SearchResult.fromJson(Map<String, dynamic> json) {
     thumbnail: json['thumbnail'] as String?,
     engine: json['engine'] as String,
     engines: List<String>.from(json['engines'] ?? []),
-    favicon: json['favicon'] ?? 'https://www.google.com/s2/favicons?domain=${uri.host}',
+    favicon: faviconUrl,
   );
 }
 
-  // 添加 toJson 方法
   Map<String, dynamic> toJson() {
     return {
       'url': url,
@@ -53,7 +72,6 @@ factory SearchResult.fromJson(Map<String, dynamic> json) {
     };
   }
 
-  // 可選：添加 copyWith 方法以方便修改
   SearchResult copyWith({
     String? url,
     String? title,
@@ -74,7 +92,6 @@ factory SearchResult.fromJson(Map<String, dynamic> json) {
     );
   }
 
-  // 可選：添加比較運算子
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

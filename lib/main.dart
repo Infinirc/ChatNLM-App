@@ -6,6 +6,7 @@ import 'screens/login_screen.dart';
 import 'providers/chat_provider.dart';
 import 'providers/auth_provider.dart';
 import 'providers/conversation_provider.dart';
+import 'managers/message_rating_manager.dart';
 import 'config/env.dart';
 
 void main() {
@@ -17,42 +18,57 @@ void main() {
         ChangeNotifierProvider(
           create: (_) => AuthProvider(),
         ),
-ChangeNotifierProxyProvider<AuthProvider, ConversationProvider>(
-  create: (context) => ConversationProvider(
-    baseUrl: Env.conversationApiUrl,
-    userId: context.read<AuthProvider>().userId ?? '',
-    isTrialMode: context.read<AuthProvider>().isTrialMode,  // 添加這行
-  ),
-  update: (context, auth, previous) {
-    if (previous != null && previous.userId == auth.userId) {
-      return previous;
-    }
-    return ConversationProvider(
-      baseUrl: Env.conversationApiUrl,
-      userId: auth.userId ?? '',
-      isTrialMode: auth.isTrialMode,  // 添加這行
-    );
-  },
-),
-ChangeNotifierProxyProvider2<AuthProvider, ConversationProvider, ChatProvider>(
-  create: (context) => ChatProvider(
-    context,
-    baseUrl: Env.llmApiUrl,
-    conversationUrl: Env.conversationApiUrl,
-    isTrialMode: context.read<AuthProvider>().isTrialMode,  // 添加這行
-  ),
-  update: (context, auth, conversation, previous) {
-    if (previous == null) {
-      return ChatProvider(
-        context,
-        baseUrl: Env.llmApiUrl,
-        conversationUrl: Env.conversationApiUrl,
-        isTrialMode: auth.isTrialMode,  // 添加這行
-      );
-    }
-    return previous;
-  },
-),
+        ChangeNotifierProxyProvider<AuthProvider, MessageRatingManager>(
+          create: (context) => MessageRatingManager(
+            baseUrl: Env.conversationApiUrl,
+            isTrialMode: context.read<AuthProvider>().isTrialMode,
+          ),
+          update: (context, auth, previous) {
+            if (previous != null && auth.isTrialMode == previous.isTrialMode) {
+              return previous;
+            }
+            return MessageRatingManager(
+              baseUrl: Env.conversationApiUrl,
+              isTrialMode: auth.isTrialMode,
+            );
+          },
+        ),
+        ChangeNotifierProxyProvider<AuthProvider, ConversationProvider>(
+          create: (context) => ConversationProvider(
+            baseUrl: Env.conversationApiUrl,
+            userId: context.read<AuthProvider>().userId ?? '',
+            isTrialMode: context.read<AuthProvider>().isTrialMode,
+          ),
+          update: (context, auth, previous) {
+            if (previous != null && previous.userId == auth.userId) {
+              return previous;
+            }
+            return ConversationProvider(
+              baseUrl: Env.conversationApiUrl,
+              userId: auth.userId ?? '',
+              isTrialMode: auth.isTrialMode,
+            );
+          },
+        ),
+        ChangeNotifierProxyProvider2<AuthProvider, ConversationProvider, ChatProvider>(
+          create: (context) => ChatProvider(
+            context,
+            baseUrl: Env.llmApiUrl,
+            conversationUrl: Env.conversationApiUrl,
+            isTrialMode: context.read<AuthProvider>().isTrialMode,
+          ),
+          update: (context, auth, conversation, previous) {
+            if (previous == null) {
+              return ChatProvider(
+                context,
+                baseUrl: Env.llmApiUrl,
+                conversationUrl: Env.conversationApiUrl,
+                isTrialMode: auth.isTrialMode,
+              );
+            }
+            return previous;
+          },
+        ),
       ],
       child: const MyApp(),
     ),
@@ -67,8 +83,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'ChatNLM',
       theme: ThemeData.light().copyWith(
-        // 淺色模式主題設定
-        scaffoldBackgroundColor: const Color(0xFFF7F7F7), // 更柔和的背景色
+        scaffoldBackgroundColor: const Color(0xFFF7F7F7),
         appBarTheme: AppBarTheme(
           backgroundColor: const Color(0xFFF7F7F7),
           elevation: 1,
@@ -80,7 +95,6 @@ class MyApp extends StatelessWidget {
             fontWeight: FontWeight.w500,
           ),
         ),
-        // 調整對話氣泡的顏色
         cardTheme: CardTheme(
           color: Colors.white,
           elevation: 0,
@@ -92,9 +106,7 @@ class MyApp extends StatelessWidget {
             ),
           ),
         ),
-        // 用戶訊息氣泡顏色
         primaryColor: const Color(0xFF007AFF),
-        // 輸入框主題
         inputDecorationTheme: InputDecorationTheme(
           fillColor: Colors.white,
           filled: true,
@@ -107,14 +119,12 @@ class MyApp extends StatelessWidget {
             vertical: 10,
           ),
         ),
-        // 圖標主題
         iconTheme: const IconThemeData(
           color: Color(0xFF2C2C2E),
           size: 24,
         ),
       ),
       darkTheme: ThemeData.dark().copyWith(
-        // 深色模式保持不變
         scaffoldBackgroundColor: Colors.black,
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.black,

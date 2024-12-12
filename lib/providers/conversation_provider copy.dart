@@ -145,15 +145,15 @@ void _handleWebSocketMessage(dynamic message) {
     switch (data['type']) {
       case 'message_rated':
         if (_currentConversation?.id == data['conversationId']) {
-          debugPrint('Received message rating update: ${data['userRating']}');
-          setCurrentConversation(_currentConversation!);
+          debugPrint('Received message rating update: ${json.encode(data['userRating'])}');
+          // 立即重新加載當前對話的消息
+          _loadCurrentConversationMessages();
         }
-        loadConversations(); // 添加重新加載
         break;
 
       case 'conversation_created':
         if (data['conversation'] != null) {
-          loadConversations(); // 改為直接重新加載
+          loadConversations();
           debugPrint('Reloading conversations after new conversation created');
         }
         break;
@@ -161,9 +161,9 @@ void _handleWebSocketMessage(dynamic message) {
       case 'message_created':
       case 'message_updated':
         if (_currentConversation?.id == data['conversationId']) {
-          setCurrentConversation(_currentConversation!);
+          _loadCurrentConversationMessages();
         }
-        loadConversations(); // 添加重新加載
+        loadConversations();
         break;
         
       case 'conversation_updated':
@@ -199,6 +199,38 @@ void _handleWebSocketMessage(dynamic message) {
     debugPrint('Error handling WebSocket message: $e');
   }
 }
+Future<void> _loadCurrentConversationMessages() async {
+  if (_currentConversation == null || isTrialMode) return;
+
+  try {
+    debugPrint('Reloading messages for current conversation: ${_currentConversation!.id}');
+    
+    final response = await http.get(
+      Uri.parse('$baseUrl/conversations/${_currentConversation!.id}/messages'),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': userId,
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      debugPrint('Successfully reloaded messages with ratings: ${json.encode(data)}');
+      
+      // 通知聊天提供程序更新消息
+      _channel?.sink.add(json.encode({
+        'type': 'messages_reloaded',
+        'conversationId': _currentConversation!.id,
+        'messages': data
+      }));
+    } else {
+      debugPrint('Failed to reload messages: ${response.statusCode}');
+    }
+  } catch (e) {
+    debugPrint('Error reloading messages: $e');
+  }
+}
+
   void _handleWebSocketError(error) {
     debugPrint('WebSocket error: $error');
     _scheduleReconnect();
@@ -241,66 +273,72 @@ void _handleWebSocketDone() {
     super.dispose();
   }
 
+// 在 ConversationProvider 類中替換此方法
 List<ConversationGroup> getGroupedConversations() {
   // 獲取當前本地時間，並設置為當天的開始時間（00:00:00）
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
-  final yesterday = DateTime(now.year, now.month, now.day - 1);
-  final twoDaysAgo = DateTime(now.year, now.month, now.day - 2);
+  final yesterday = today.subtract(const Duration(days: 1));
+  final twoDaysAgo = today.subtract(const Duration(days: 2));
 
-
-
-  final conversationsToGroup = _searchQuery.isEmpty 
-      ? _conversations 
-      : _filteredConversations;
-
+  // 使用 Set 來存儲已經分配的對話 ID
+  final processedIds = <String>{};
+  
+  // 創建各時間段的對話列表
   final todayConversations = <Conversation>[];
   final yesterdayConversations = <Conversation>[];
   final twoDaysAgoConversations = <Conversation>[];
   final olderConversations = <Conversation>[];
 
+  // 獲取要分組的對話列表
+  final conversationsToGroup = _searchQuery.isEmpty 
+      ? _conversations 
+      : _filteredConversations;
+
+  // 確保每個對話只被分配到一個組中
   for (var conversation in conversationsToGroup) {
+    // 如果這個對話已經被處理過，跳過
+    if (processedIds.contains(conversation.id)) {
+      continue;
+    }
+
     // 將 UTC 時間轉換為本地時間
     final localTime = conversation.lastModified.toLocal();
-    // 獲取對話日期的 00:00:00 時間點
     final conversationDate = DateTime(
       localTime.year,
       localTime.month,
       localTime.day,
     );
 
-
-
-    // 直接比較日期
-    final diffFromToday = today.difference(conversationDate).inDays;
-    
-    if (diffFromToday == 0) {
+    // 分配對話到對應的時間組
+    if (conversationDate.isAtSameMomentAs(today)) {
       todayConversations.add(conversation);
-     
-    } else if (diffFromToday == 1) {
+    } else if (conversationDate.isAtSameMomentAs(yesterday)) {
       yesterdayConversations.add(conversation);
-  
-    } else if (diffFromToday == 2) {
+    } else if (conversationDate.isAtSameMomentAs(twoDaysAgo)) {
       twoDaysAgoConversations.add(conversation);
-
     } else {
       olderConversations.add(conversation);
-
     }
+
+    // 標記此對話 ID 已處理
+    processedIds.add(conversation.id);
   }
 
-  // 排序函數
+  // 對每個組內的對話按時間排序
   void sortConversations(List<Conversation> conversations) {
     conversations.sort((a, b) => b.lastModified.compareTo(a.lastModified));
   }
 
+  // 創建結果列表
   final groups = <ConversationGroup>[];
 
+  // 只添加非空的組
   if (todayConversations.isNotEmpty) {
     sortConversations(todayConversations);
     groups.add(ConversationGroup(
       title: '今天',
-      conversations: todayConversations,
+      conversations: List.unmodifiable(todayConversations),
     ));
   }
 
@@ -308,7 +346,7 @@ List<ConversationGroup> getGroupedConversations() {
     sortConversations(yesterdayConversations);
     groups.add(ConversationGroup(
       title: '昨天',
-      conversations: yesterdayConversations,
+      conversations: List.unmodifiable(yesterdayConversations),
     ));
   }
 
@@ -316,7 +354,7 @@ List<ConversationGroup> getGroupedConversations() {
     sortConversations(twoDaysAgoConversations);
     groups.add(ConversationGroup(
       title: '前天',
-      conversations: twoDaysAgoConversations,
+      conversations: List.unmodifiable(twoDaysAgoConversations),
     ));
   }
 
@@ -324,13 +362,11 @@ List<ConversationGroup> getGroupedConversations() {
     sortConversations(olderConversations);
     groups.add(ConversationGroup(
       title: '更早',
-      conversations: olderConversations,
+      conversations: List.unmodifiable(olderConversations),
     ));
   }
 
-
-
-  return groups;
+  return List.unmodifiable(groups);
 }
   Future<void> saveLocalMessage(String conversationId, Message message) async {
     if (!isTrialMode) return;
@@ -763,20 +799,23 @@ Future<void> saveMessage(Message message) async {
    rethrow;
  }
 }
-  Future<void> setCurrentConversation(Conversation conversation) async {
-    debugPrint('Setting current conversation: ${conversation.id} with title: ${conversation.title}');
-    _currentConversation = conversation.copyWith(); 
-    notifyListeners();
-    
-    if (isTrialMode) {
-      // 如果是試用模式，獲取本地存儲的消息
-      final localMessages = _localMessages[conversation.id];
-      if (localMessages != null) {
-        debugPrint('Found ${localMessages.length} local messages for conversation: ${conversation.id}');
-      }
-      return;
-    }
+Future<void> setCurrentConversation(Conversation conversation) async {
+  debugPrint('Setting current conversation: ${conversation.id} with title: ${conversation.title}');
   
+  // 保存舊的 conversation id 用於比較
+  final oldConversationId = _currentConversation?.id;
+  
+  _currentConversation = conversation.copyWith();
+  notifyListeners();
+  
+  if (isTrialMode) {
+    final localMessages = _localMessages[conversation.id];
+    if (localMessages != null) {
+      debugPrint('Found ${localMessages.length} local messages for conversation: ${conversation.id}');
+    }
+    return;
+  }
+
   try {
     final response = await http.get(
       Uri.parse('$baseUrl/conversations/${conversation.id}/messages'),
@@ -791,17 +830,34 @@ Future<void> saveMessage(Message message) async {
       final data = json.decode(response.body);
       
       if (data is List) {
+        // 打印所有消息的評分數據以進行調試
         for (var messageData in data) {
+          if (messageData['userRating'] != null) {
+            debugPrint('Message ${messageData['_id']} ratings: ${json.encode(messageData['userRating'])}');
+          }
           if (messageData['searchResults'] != null) {
-            debugPrint('Found message with search results: ${messageData['searchResults'].length} results');
+            debugPrint('Message has ${messageData['searchResults'].length} search results');
           }
         }
+        
+        // 如果切換了不同的對話，發送 WebSocket 通知
+        if (oldConversationId != conversation.id) {
+          _channel?.sink.add(json.encode({
+            'type': 'conversation_switched',
+            'conversationId': conversation.id,
+            'messages': data
+          }));
+        }
       }
+      
+      notifyListeners(); // 確保 UI 更新
     } else {
       debugPrint('Failed to load messages: ${response.statusCode}');
+      throw Exception('Failed to load messages: ${response.statusCode}');
     }
   } catch (e) {
-    debugPrint('Error loading messages: $e');
+    debugPrint('Error loading conversation messages: $e');
+    rethrow;
   }
 }
 

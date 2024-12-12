@@ -7,6 +7,7 @@ import '../models/message.dart';
 import 'dart:async';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
+import 'dart:math' as math;
 
 class ConversationGroup {
   final String title;
@@ -145,15 +146,15 @@ void _handleWebSocketMessage(dynamic message) {
     switch (data['type']) {
       case 'message_rated':
         if (_currentConversation?.id == data['conversationId']) {
-          debugPrint('Received message rating update: ${data['userRating']}');
-          setCurrentConversation(_currentConversation!);
+          debugPrint('Received message rating update: ${json.encode(data['userRating'])}');
+          // 立即重新加載當前對話的消息
+          _loadCurrentConversationMessages();
         }
-        loadConversations(); // 添加重新加載
         break;
 
       case 'conversation_created':
         if (data['conversation'] != null) {
-          loadConversations(); // 改為直接重新加載
+          loadConversations();
           debugPrint('Reloading conversations after new conversation created');
         }
         break;
@@ -161,9 +162,9 @@ void _handleWebSocketMessage(dynamic message) {
       case 'message_created':
       case 'message_updated':
         if (_currentConversation?.id == data['conversationId']) {
-          setCurrentConversation(_currentConversation!);
+          _loadCurrentConversationMessages();
         }
-        loadConversations(); // 添加重新加載
+        loadConversations();
         break;
         
       case 'conversation_updated':
@@ -199,6 +200,38 @@ void _handleWebSocketMessage(dynamic message) {
     debugPrint('Error handling WebSocket message: $e');
   }
 }
+Future<void> _loadCurrentConversationMessages() async {
+  if (_currentConversation == null || isTrialMode) return;
+
+  try {
+    debugPrint('Reloading messages for current conversation: ${_currentConversation!.id}');
+    
+    final response = await http.get(
+      Uri.parse('$baseUrl/conversations/${_currentConversation!.id}/messages'),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': userId,
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      debugPrint('Successfully reloaded messages with ratings: ${json.encode(data)}');
+      
+      // 通知聊天提供程序更新消息
+      _channel?.sink.add(json.encode({
+        'type': 'messages_reloaded',
+        'conversationId': _currentConversation!.id,
+        'messages': data
+      }));
+    } else {
+      debugPrint('Failed to reload messages: ${response.statusCode}');
+    }
+  } catch (e) {
+    debugPrint('Error reloading messages: $e');
+  }
+}
+
   void _handleWebSocketError(error) {
     debugPrint('WebSocket error: $error');
     _scheduleReconnect();
@@ -241,66 +274,72 @@ void _handleWebSocketDone() {
     super.dispose();
   }
 
+// 在 ConversationProvider 類中替換此方法
 List<ConversationGroup> getGroupedConversations() {
   // 獲取當前本地時間，並設置為當天的開始時間（00:00:00）
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
-  final yesterday = DateTime(now.year, now.month, now.day - 1);
-  final twoDaysAgo = DateTime(now.year, now.month, now.day - 2);
+  final yesterday = today.subtract(const Duration(days: 1));
+  final twoDaysAgo = today.subtract(const Duration(days: 2));
 
-
-
-  final conversationsToGroup = _searchQuery.isEmpty 
-      ? _conversations 
-      : _filteredConversations;
-
+  // 使用 Set 來存儲已經分配的對話 ID
+  final processedIds = <String>{};
+  
+  // 創建各時間段的對話列表
   final todayConversations = <Conversation>[];
   final yesterdayConversations = <Conversation>[];
   final twoDaysAgoConversations = <Conversation>[];
   final olderConversations = <Conversation>[];
 
+  // 獲取要分組的對話列表
+  final conversationsToGroup = _searchQuery.isEmpty 
+      ? _conversations 
+      : _filteredConversations;
+
+  // 確保每個對話只被分配到一個組中
   for (var conversation in conversationsToGroup) {
+    // 如果這個對話已經被處理過，跳過
+    if (processedIds.contains(conversation.id)) {
+      continue;
+    }
+
     // 將 UTC 時間轉換為本地時間
     final localTime = conversation.lastModified.toLocal();
-    // 獲取對話日期的 00:00:00 時間點
     final conversationDate = DateTime(
       localTime.year,
       localTime.month,
       localTime.day,
     );
 
-
-
-    // 直接比較日期
-    final diffFromToday = today.difference(conversationDate).inDays;
-    
-    if (diffFromToday == 0) {
+    // 分配對話到對應的時間組
+    if (conversationDate.isAtSameMomentAs(today)) {
       todayConversations.add(conversation);
-     
-    } else if (diffFromToday == 1) {
+    } else if (conversationDate.isAtSameMomentAs(yesterday)) {
       yesterdayConversations.add(conversation);
-  
-    } else if (diffFromToday == 2) {
+    } else if (conversationDate.isAtSameMomentAs(twoDaysAgo)) {
       twoDaysAgoConversations.add(conversation);
-
     } else {
       olderConversations.add(conversation);
-
     }
+
+    // 標記此對話 ID 已處理
+    processedIds.add(conversation.id);
   }
 
-  // 排序函數
+  // 對每個組內的對話按時間排序
   void sortConversations(List<Conversation> conversations) {
     conversations.sort((a, b) => b.lastModified.compareTo(a.lastModified));
   }
 
+  // 創建結果列表
   final groups = <ConversationGroup>[];
 
+  // 只添加非空的組
   if (todayConversations.isNotEmpty) {
     sortConversations(todayConversations);
     groups.add(ConversationGroup(
       title: '今天',
-      conversations: todayConversations,
+      conversations: List.unmodifiable(todayConversations),
     ));
   }
 
@@ -308,7 +347,7 @@ List<ConversationGroup> getGroupedConversations() {
     sortConversations(yesterdayConversations);
     groups.add(ConversationGroup(
       title: '昨天',
-      conversations: yesterdayConversations,
+      conversations: List.unmodifiable(yesterdayConversations),
     ));
   }
 
@@ -316,7 +355,7 @@ List<ConversationGroup> getGroupedConversations() {
     sortConversations(twoDaysAgoConversations);
     groups.add(ConversationGroup(
       title: '前天',
-      conversations: twoDaysAgoConversations,
+      conversations: List.unmodifiable(twoDaysAgoConversations),
     ));
   }
 
@@ -324,39 +363,186 @@ List<ConversationGroup> getGroupedConversations() {
     sortConversations(olderConversations);
     groups.add(ConversationGroup(
       title: '更早',
-      conversations: olderConversations,
+      conversations: List.unmodifiable(olderConversations),
     ));
   }
 
-
-
-  return groups;
+  return List.unmodifiable(groups);
 }
-  Future<void> saveLocalMessage(String conversationId, Message message) async {
-    if (!isTrialMode) return;
+Future<void> saveLocalMessage(String conversationId, Message message, {bool updateVersions = true}) async {
+  if (!isTrialMode) return;
+  
+  if (!_localMessages.containsKey(conversationId)) {
+    _localMessages[conversationId] = [];
+  }
+  
+  debugPrint('保存本地消息: role=${message.role}, content=${message.content}');
+  debugPrint('更新版本: $updateVersions');
+  debugPrint('當前評分數據: ${message.userRating}');
+  
+  final existingIndex = _localMessages[conversationId]!.indexWhere((m) => 
+    m.timestamp.isAtSameMomentAs(message.timestamp) && 
+    m.role == message.role
+  );
+  
+  if (existingIndex != -1) {
+    final existing = _localMessages[conversationId]![existingIndex];
     
-    if (!_localMessages.containsKey(conversationId)) {
-      _localMessages[conversationId] = [];
+    // 處理版本和評分
+    List<String> versions;
+    Map<String, dynamic>? ratings = {};
+    
+    // 合併現有評分數據
+    if (existing.userRating != null) {
+      ratings.addAll(existing.userRating!);
     }
-    _localMessages[conversationId]!.add(message);
-    notifyListeners();
+    if (message.userRating != null) {
+      ratings.addAll(message.userRating!);
+    }
+    
+    if (updateVersions) {
+      // 更新版本列表
+      if (existing.contentVersions != null) {
+        versions = List<String>.from(existing.contentVersions!);
+      } else {
+        versions = [existing.content];
+        debugPrint('創建新的版本列表');
+      }
+      
+      // 添加新版本
+      if (!versions.contains(message.content.trim())) {
+        versions.add(message.content.trim());
+        debugPrint('添加新版本: ${versions.length - 1}');
+      }
+    } else {
+      // 保持現有版本列表
+      versions = List<String>.from(existing.contentVersions ?? [existing.content]);
+      debugPrint('保持現有版本列表: ${versions.length} 個版本');
+    }
+    
+    // 確定正確的版本索引
+    final currentVersion = message.currentVersion >= 0 ? 
+      message.currentVersion.clamp(0, versions.length - 1) : 
+      versions.length - 1;
+    
+    final updatedMessage = Message(
+      id: existing.id,
+      content: versions[currentVersion],  // 確保內容與版本匹配
+      contentVersions: versions,
+      currentVersion: currentVersion,
+      isComplete: message.isComplete,
+      isUser: message.isUser,
+      role: message.role,
+      timestamp: message.timestamp,
+      userRating: ratings.isEmpty ? null : ratings,
+      searchResults: message.searchResults,
+      images: message.images
+    );
+    
+    _localMessages[conversationId]![existingIndex] = updatedMessage;
+    debugPrint('更新消息完成：');
+    debugPrint('- ID: ${updatedMessage.id}');
+    debugPrint('- 版本數: ${versions.length}');
+    debugPrint('- 當前版本: $currentVersion');
+    debugPrint('- 評分數據: $ratings');
+    debugPrint('- 內容: ${versions[currentVersion]}');
+  } else {
+    // 處理新消息
+    final versions = updateVersions ? 
+      [message.content.trim()] : 
+      message.contentVersions ?? [message.content.trim()];
+      
+    final currentVersion = message.currentVersion >= 0 ? 
+      message.currentVersion.clamp(0, versions.length - 1) : 
+      0;
+    
+    final newMessage = Message(
+      id: message.id,
+      content: versions[currentVersion],
+      contentVersions: versions,
+      currentVersion: currentVersion,
+      isComplete: message.isComplete,
+      isUser: message.isUser,
+      role: message.role,
+      timestamp: message.timestamp,
+      userRating: message.userRating,
+      searchResults: message.searchResults,
+      images: message.images
+    );
+    
+    _localMessages[conversationId]!.add(newMessage);
+    debugPrint('添加新消息：');
+    debugPrint('- 版本數: ${versions.length}');
+    debugPrint('- 當前版本: $currentVersion');
+    debugPrint('- 評分數據: ${message.userRating}');
   }
-  List<Message>? getLocalMessages(String conversationId) {
-    return _localMessages[conversationId];
-  }
+  
+  _localMessages[conversationId]!.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  notifyListeners();
+}
+List<Message>? getLocalMessages(String conversationId) {
+  if (!_localMessages.containsKey(conversationId)) return null;
+  
+  final messages = List<Message>.from(_localMessages[conversationId]!);
+  messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-    void clearLocalMessages() {
+  // 確保所有消息都有正確的版本信息
+  final processedMessages = messages.map((message) {
+    if (message.contentVersions == null || message.contentVersions!.isEmpty) {
+      debugPrint('Adding version history to message: ${message.id}');
+      return Message(
+        id: message.id,
+        content: message.content,
+        contentVersions: [message.content],
+        currentVersion: 0,
+        isComplete: message.isComplete,
+        isUser: message.isUser,
+        role: message.role,
+        timestamp: message.timestamp,
+        userRating: message.userRating,
+        searchResults: message.searchResults,
+        images: message.images
+      );
+    } else {
+      debugPrint('Message ${message.id} already has version history: ${message.contentVersions!.length} versions');
+      return message;
+    }
+  }).toList();
+
+  return processedMessages;
+}
+void clearLocalMessages() {
+  if (_currentConversation != null) {
+    final currentId = _currentConversation!.id;
+    final currentMessages = _localMessages[currentId];
     _localMessages.clear();
-    notifyListeners();
+    if (currentMessages != null) {
+      _localMessages[currentId] = currentMessages;
+    }
+  } else {
+    _localMessages.clear();
   }
+  notifyListeners();
+}
 Future<void> clearAllConversations() async {
   try {
     debugPrint('Clearing all conversations for user: $userId');
     
-    // 試用模式直接清除本地數據
+    // 試用模式直接清除本地數據，但保留當前對話
     if (isTrialMode) {
-      _conversations.clear();
-      _currentConversation = null;
+      if (_currentConversation != null) {
+        final currentId = _currentConversation!.id;
+        final currentMessages = _localMessages[currentId];
+        _conversations.clear();
+        _localMessages.clear();
+        if (currentMessages != null) {
+          _localMessages[currentId] = currentMessages;
+          _conversations.add(_currentConversation!);
+        }
+      } else {
+        _conversations.clear();
+        _localMessages.clear();
+      }
       _filteredConversations.clear();
       _currentPage = 1;
       _hasMoreData = true;
@@ -364,6 +550,7 @@ Future<void> clearAllConversations() async {
       return;
     }
 
+    // 非試用模式的原有邏輯...
     final response = await http.delete(
       Uri.parse('$baseUrl/conversations'),
       headers: {
@@ -701,6 +888,9 @@ Future<void> saveMessage(Message message) async {
        _conversations[index] = _currentConversation!;
        _conversations.sort((a, b) => b.lastModified.compareTo(a.lastModified));
      }
+
+     // 保存消息到本地存儲
+     await saveLocalMessage(_currentConversation!.id, message);
      
      _filterConversations();
      notifyListeners();
@@ -763,20 +953,23 @@ Future<void> saveMessage(Message message) async {
    rethrow;
  }
 }
-  Future<void> setCurrentConversation(Conversation conversation) async {
-    debugPrint('Setting current conversation: ${conversation.id} with title: ${conversation.title}');
-    _currentConversation = conversation.copyWith(); 
-    notifyListeners();
-    
-    if (isTrialMode) {
-      // 如果是試用模式，獲取本地存儲的消息
-      final localMessages = _localMessages[conversation.id];
-      if (localMessages != null) {
-        debugPrint('Found ${localMessages.length} local messages for conversation: ${conversation.id}');
-      }
-      return;
-    }
+Future<void> setCurrentConversation(Conversation conversation) async {
+  debugPrint('Setting current conversation: ${conversation.id} with title: ${conversation.title}');
   
+  // 保存舊的 conversation id 用於比較
+  final oldConversationId = _currentConversation?.id;
+  
+  _currentConversation = conversation.copyWith();
+  notifyListeners();
+  
+  if (isTrialMode) {
+    final localMessages = _localMessages[conversation.id];
+    if (localMessages != null) {
+      debugPrint('Found ${localMessages.length} local messages for conversation: ${conversation.id}');
+    }
+    return;
+  }
+
   try {
     final response = await http.get(
       Uri.parse('$baseUrl/conversations/${conversation.id}/messages'),
@@ -791,17 +984,34 @@ Future<void> saveMessage(Message message) async {
       final data = json.decode(response.body);
       
       if (data is List) {
+        // 打印所有消息的評分數據以進行調試
         for (var messageData in data) {
+          if (messageData['userRating'] != null) {
+            debugPrint('Message ${messageData['_id']} ratings: ${json.encode(messageData['userRating'])}');
+          }
           if (messageData['searchResults'] != null) {
-            debugPrint('Found message with search results: ${messageData['searchResults'].length} results');
+            debugPrint('Message has ${messageData['searchResults'].length} search results');
           }
         }
+        
+        // 如果切換了不同的對話，發送 WebSocket 通知
+        if (oldConversationId != conversation.id) {
+          _channel?.sink.add(json.encode({
+            'type': 'conversation_switched',
+            'conversationId': conversation.id,
+            'messages': data
+          }));
+        }
       }
+      
+      notifyListeners(); // 確保 UI 更新
     } else {
       debugPrint('Failed to load messages: ${response.statusCode}');
+      throw Exception('Failed to load messages: ${response.statusCode}');
     }
   } catch (e) {
-    debugPrint('Error loading messages: $e');
+    debugPrint('Error loading conversation messages: $e');
+    rethrow;
   }
 }
 

@@ -10,6 +10,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:universal_html/html.dart' as html;
 import '../config/env.dart';
 
+import 'package:http/http.dart' as http;
+
 class AuthService {
   final _log = Logger('AuthService');
   static const String callbackUrlScheme = 'chatnlm';
@@ -48,73 +50,90 @@ class AuthService {
     }
   }
 
-  Future<String?> _webAuthenticate(String page) async {
-    try {
-      // 檢查當前 URL 是否有 token
-      if (kIsWeb) {
-        final uri = Uri.parse(html.window.location.href);
-        final token = uri.queryParameters['token'];
-        final status = uri.queryParameters['status'];
-        
-        if (status == 'success' && token != null) {
-          debugPrint('Found token in URL parameters');
-          await _saveAuthData(token);
-          return token;
-        }
-      }
+Future<String?> _webAuthenticate(String page) async {
+  try {
+    final callbackUrl = Env.webCallbackUrl;
+    debugPrint('準備存儲回調 URL: $callbackUrl');
+    
+    // 首先，我們需要重定向到登入頁面
+    final loginPageUrl = Uri.parse('${Env.authApiUrl}/auth/$page').replace(
+      queryParameters: {
+        'redirectUrl': callbackUrl,
+      },
+    );
+    
+    debugPrint('準備重定向到登入頁面，URL: $loginPageUrl');
 
-      final callbackUrl = Uri.base.replace(path: '/auth_callback').toString();
-      final loginUrl = Uri.parse('${Env.authApiUrl}/auth/$page?redirectUrl=$callbackUrl');
-
-      if (await canLaunchUrl(loginUrl)) {
-        await launchUrl(
-          loginUrl,
-          webOnlyWindowName: '_self',
-          mode: LaunchMode.platformDefault,
-        );
-
-        // 等待 localStorage 中的 token
-        final token = await _waitForToken();
-        if (token != null) {
-          await _saveAuthData(token);
-          return token;
-        }
-      }
-    } catch (e) {
-      _log.warning('Web authentication error', e);
-    }
-    return null;
-  }
-
-  Future<String?> _waitForToken() async {
-    if (kIsWeb) {
-      final completer = Completer<String?>();
-      
-      // 設置 storage 事件監聽器
-      html.window.addEventListener('storage', (event) {
-        final storageEvent = event as html.StorageEvent;
-        if (storageEvent.key == _tokenKey && storageEvent.newValue != null) {
-          completer.complete(storageEvent.newValue);
-        }
-      });
-
-      // 檢查是否已經有 token
-      final existingToken = html.window.localStorage[_tokenKey];
-      if (existingToken != null) {
-        return existingToken;
-      }
-
-      // 5分鐘超時
-      return completer.future.timeout(
-        const Duration(minutes: 5),
-        onTimeout: () {
-          debugPrint('Auth timeout');
-          return null;
-        },
+    if (await canLaunchUrl(loginPageUrl)) {
+      await launchUrl(
+        loginPageUrl,
+        webOnlyWindowName: '_self',
+        mode: LaunchMode.platformDefault,
       );
+      
+      return await _waitForToken();
     }
-    return null;
+  } catch (e) {
+    debugPrint('Web 認證錯誤: $e');
   }
+  return null;
+}
+Future<void> _storeRedirectUrl(String redirectUrl) async {
+  try {
+    await http.post(
+      Uri.parse('${Env.authApiUrl}/auth/store-redirect'),
+      body: json.encode({'redirectUrl': redirectUrl}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    debugPrint('儲存重定向 URL 失敗: $e');
+  }
+}
+Future<String?> _waitForToken() async {
+  if (kIsWeb) {
+    final completer = Completer<String?>();
+    var eventListener;
+    
+    // 創建事件監聽器
+    eventListener = (html.Event event) {
+      final storageEvent = event as html.StorageEvent;
+      if (storageEvent.key == _tokenKey && storageEvent.newValue != null) {
+        debugPrint('收到 token: ${storageEvent.newValue}');
+        html.window.removeEventListener('storage', eventListener);
+        completer.complete(storageEvent.newValue);
+      }
+    };
+    
+    // 添加監聽器
+    html.window.addEventListener('storage', eventListener);
+    
+    // 檢查當前 URL 是否包含 token
+    final uri = Uri.parse(html.window.location.href);
+    final tokenFromUrl = uri.queryParameters['token'];
+    if (tokenFromUrl != null) {
+      debugPrint('從 URL 獲取 token');
+      return tokenFromUrl;
+    }
+    
+    // 檢查本地存儲
+    final existingToken = html.window.localStorage[_tokenKey];
+    if (existingToken != null) {
+      debugPrint('從 localStorage 獲取現有 token');
+      return existingToken;
+    }
+
+    // 設置超時
+    return completer.future.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () {
+        debugPrint('認證超時');
+        html.window.removeEventListener('storage', eventListener);
+        return null;
+      },
+    );
+  }
+  return null;
+}
 
   Future<String?> _nativeAuthenticate(String page) async {
     try {
@@ -126,7 +145,7 @@ class AuthService {
         url: authUrl,
         callbackUrlScheme: callbackUrlScheme,
         options: const FlutterWebAuth2Options(
-          preferEphemeral: true,
+          preferEphemeral: false,
         ),
       );
       

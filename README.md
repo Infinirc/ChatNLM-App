@@ -4,31 +4,41 @@ A new Flutter project.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-
-
 lib/
-  ├── models/
-  │   ├── llm_model.dart
-  │   └── message.dart
-  ├── providers/
-  │   └── chat_provider.dart
-  ├── screens/
-  │   └── chat_screen.dart
-  ├── widgets/
-  │   ├── chat_input.dart
-  │   └── chat_message.dart
-  └── main.dart
-
-
-
-  flutter run --observatory-port=9100
+├── config/
+│   └── env.dart
+├── managers/
+│   └── message_rating_manager.dart
+├── models/
+│   ├── conversation.dart
+│   ├── llm_model.dart
+│   ├── message.dart
+│   └── search_result.dart
+├── providers/
+│   ├── auth_provider.dart
+│   ├── chat_provider.dart
+│   └── conversation_provider.dart
+├── screens/
+│   ├── chat_screen.dart
+│   ├── login_screen.dart
+│   └── voice_input_screen.dart
+├── services/
+│   ├── web/
+│   │   ├── api_service.dart
+│   │   ├── auth_service.dart
+│   │   ├── platform_voice.dart
+│   │   ├── search_service.dart
+│   │   ├── stub_html.dart
+│   │   ├── voice_service.dart
+│   │   └── web_voice.dart
+├── utils/
+│   └── image_utils.dart
+├── widgets/
+│   ├── chat_input.dart
+│   ├── chat_message.dart
+│   ├── markdown_content.dart
+│   ├── message_rating.dart
+│   ├── search_results.dart
+│   ├── source_button.dart
+│   └── streaming_text.dart
+└── main.dart

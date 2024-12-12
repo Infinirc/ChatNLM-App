@@ -1,3 +1,4 @@
+//conversation.dart
 class Conversation {
   final String id;
   final String title;

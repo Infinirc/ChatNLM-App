@@ -1,4 +1,5 @@
 // lib/config/env.dart
+import 'package:flutter/foundation.dart';
 class Env {
   // Base URLs (保持現有的不變)
   static const String authApiUrl = 'https://chatnlm-auth.api.infinirc.com';
@@ -31,4 +32,14 @@ static const String searchApiUrl = 'https://chatnlm-search.api.infinirc.com';
   static String get processAudioUrl => '$voiceApiUrl/process-audio';
   static String get audioDevicesUrl => '$voiceApiUrl/api/audio-devices';
   static String get voiceInputUrl => '$voiceApiUrl/api/voice-input';
+
+
+  static String get webCallbackUrl {
+    if (kIsWeb) {
+      return '${Uri.base.origin}/auth_callback';
+    }
+    return 'chatnlm://callback';
+  }
+
 }
+

@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
+import '../managers/message_rating_manager.dart';
 
 
 class ImageData {
@@ -330,108 +331,7 @@ Future<void> _handleTitleComplete(String title) async {
     }
   }
 
-Future<void> rateMessage(String messageId, String rating) async {
-  try {
-    if (_currentConversationId == null) return;
 
-    debugPrint('Rating message with id: $messageId (Trial Mode: $isTrialMode)');
-    
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    
-    final index = _messages.indexWhere((msg) => msg.id == messageId);
-    if (index == -1) {
-      debugPrint('Message not found locally');
-      return;
-    }
-
-    // 使用 userId 和 version 組合作為評分的唯一標識
-    final userId = authProvider.userId ?? '';
-    final currentVersion = _messages[index].currentVersion.toString();
-    final ratingKey = '${userId}_$currentVersion';
-    
-    // 準備當前的評分數據
-    Map<String, dynamic> currentRatings = 
-        Map<String, dynamic>.from(_messages[index].userRating ?? {});
-    
-    // 檢查是否需要取消評分
-    if (currentRatings[ratingKey] == rating) {
-      currentRatings.remove(ratingKey);
-    } else {
-      currentRatings[ratingKey] = rating;
-    }
-    
-    // 立即更新本地狀態
-    _messages[index] = _messages[index].copyWith(
-      userRating: currentRatings.isEmpty ? null : currentRatings
-    );
-    notifyListeners();
-
-    if (isTrialMode) {
-      return;
-    }
-
-    final mongoId = messageId.length == 24 ? messageId : _messages[index].id;
-    
-    final response = await http.post(
-      Uri.parse('$_conversationUrl/conversations/$_currentConversationId/messages/$mongoId/rate'),
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': userId,
-      },
-      body: json.encode({
-        'rating': rating,
-        'version': currentVersion  // 添加版本信息
-      }),
-    );
-
-    if (response.statusCode == 404) {
-      debugPrint('Message not found on server, reloading conversation...');
-      await loadConversationMessages(_currentConversationId!);
-      
-      final newMessage = _messages.firstWhere(
-        (msg) => msg.timestamp.isAtSameMomentAs(_messages[index].timestamp) && 
-                 msg.role == _messages[index].role && 
-                 msg.content == _messages[index].content,
-        orElse: () => _messages[index],
-      );
-      
-      if (newMessage.id != messageId) {
-        debugPrint('Found message with new id: ${newMessage.id}');
-        await rateMessage(newMessage.id, rating);
-      }
-    } else if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      
-      if (data['userRating'] != null) {
-        final Map<String, dynamic> serverRatings = Map<String, dynamic>.from(data['userRating']);
-        currentRatings = _messages[index].userRating ?? {};
-        
-        if (serverRatings.isEmpty) {
-          currentRatings.remove(ratingKey);
-          if (currentRatings.isEmpty) {
-            currentRatings = {};
-          }
-        } else {
-          serverRatings.forEach((userId, rating) {
-            currentRatings[ratingKey] = rating;
-          });
-        }
-        
-        _messages[index] = _messages[index].copyWith(
-          userRating: currentRatings.isEmpty ? null : currentRatings
-        );
-        notifyListeners();
-      }
-      
-      debugPrint('Rating updated successfully. New ratings: ${data['userRating']}');
-    } else {
-      debugPrint('Rating failed: ${response.statusCode}, ${response.body}');
-      await loadConversationMessages(_currentConversationId!);
-    }
-  } catch (e) {
-    debugPrint('Error rating message: $e');
-  }
-}
 Future<void> loadConversationMessages(String conversationId) async {
   if (_isLoadingMessages) {
     return;
@@ -474,55 +374,64 @@ if (isTrialMode) {
       },
     );
 
-    if (response.statusCode == 200) {
-      final List<dynamic> data = json.decode(response.body);
-      debugPrint('Received ${data.length} messages from server');
-      
-      final Map<String, Message> latestMessages = {};
-      
-      for (var json in data) {
-        // 處理評分數據格式
-        if (json['userRating'] != null) {
-          final userId = authProvider.userId ?? '';
-          final currentVersion = json['currentVersion']?.toString() ?? '0';
-          final ratingKey = '${userId}_$currentVersion';
-          
-          if (json['userRating'] is Map) {
-            final serverRating = Map<String, dynamic>.from(json['userRating']);
-            if (serverRating.containsKey(userId)) {
-              json['userRating'] = {
-                ratingKey: serverRating[userId]
-              };
-            }
-          } else if (json['userRating'] is String) {
-            json['userRating'] = {
-              ratingKey: json['userRating']
-            };
-          }
-          debugPrint('Processed rating for message: ${json['userRating']}');
-        }
+if (response.statusCode == 200) {
+  final List<dynamic> data = json.decode(response.body);
+  debugPrint('Received ${data.length} messages from server');
+  
+  final Map<String, Message> latestMessages = {};
+  
+  for (var json in data) {
+    debugPrint('Processing message: ${json['_id']} with rating: ${json['userRating']}');
+    
+    // 改進評分數據處理
+if (json['userRating'] != null) {
+  final userId = authProvider.userId ?? '';
+  final currentVersion = json['currentVersion']?.toString() ?? '0';
+  final ratingKey = '${userId}_$currentVersion';
+  
+  if (json['userRating'] is Map) {
+    json['userRating'] = Map<String, dynamic>.from(json['userRating']);
+    // 更新評分緩存
+    Provider.of<MessageRatingManager>(context, listen: false).updateRatingCache(
+      json['_id'],
+      json['userRating']
+    );
+  } else if (json['userRating'] is String) {
+    final ratingData = {
+      ratingKey: json['userRating']
+    };
+    json['userRating'] = ratingData;
+    Provider.of<MessageRatingManager>(context, listen: false).updateRatingCache(
+      json['_id'],
+      ratingData
+    );
+  }
+  debugPrint('Processed rating data: ${json['userRating']}');
+}
 
-        final message = Message.fromJson(json);
-        final key = '${message.role}_${message.timestamp.millisecondsSinceEpoch}';
-        
-        if (latestMessages.containsKey(key)) {
-          final existingMessage = latestMessages[key]!;
-          if (message.contentVersions != null && 
-              message.currentVersion > (existingMessage.contentVersions?.length ?? -1)) {
-            final Map<String, dynamic> mergedRatings = 
-              Map<String, dynamic>.from(existingMessage.userRating ?? {});
-            if (message.userRating != null) {
-              mergedRatings.addAll(message.userRating!);
-            }
-            
-            latestMessages[key] = message.copyWith(
-              userRating: mergedRatings.isEmpty ? null : mergedRatings
-            );
-          }
-        } else {
-          latestMessages[key] = message;
+    final message = Message.fromJson(json);
+    final key = '${message.role}_${message.timestamp.millisecondsSinceEpoch}';
+    
+    if (latestMessages.containsKey(key)) {
+      final existingMessage = latestMessages[key]!;
+      if (message.contentVersions != null && 
+          message.currentVersion > (existingMessage.contentVersions?.length ?? -1)) {
+        // 合併評分數據
+        final Map<String, dynamic> mergedRatings = 
+          Map<String, dynamic>.from(existingMessage.userRating ?? {});
+        if (message.userRating != null) {
+          mergedRatings.addAll(message.userRating!);
         }
+        
+        latestMessages[key] = message.copyWith(
+          userRating: mergedRatings.isEmpty ? null : mergedRatings
+        );
+        debugPrint('Updated message with merged ratings: $mergedRatings');
       }
+    } else {
+      latestMessages[key] = message;
+    }
+  }
 
       final sortedMessages = latestMessages.values.toList()
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
@@ -813,7 +722,7 @@ if (isTrialMode) {
           result.content.isNotEmpty
         ).toList();
         
-        systemPrompt += '根據以上資訊，我來回答你的問題：\n';
+        systemPrompt += '根據以上資訊，參考多一點資訊，來回答你的問題，且要是最新資訊，詳細一點可以列點：\n';
 
         _messages[0] = _messages[0].copyWith(
           content: '🤔 正在根據搜尋結果生成回答...',
@@ -925,14 +834,11 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
     // 試用模式下
     if (isTrialMode) {
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-      
-      // 先保存更新後的AI消息
       await conversationProvider.saveLocalMessage(
         _currentConversationId!,
         aiMessage
       );
       
-      // 重新從本地加載所有消息以確保順序
       final localMessages = conversationProvider.getLocalMessages(_currentConversationId!);
       if (localMessages != null) {
         _messages.clear();
@@ -940,9 +846,31 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
         _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
       }
     } else {
-      // 非試用模式保持原有邏輯
-      _messages[0] = aiMessage;
+      // 非試用模式邏輯
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      final response = await http.post(
+        Uri.parse('${_conversationUrl}/conversations/$_currentConversationId/messages'),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': Provider.of<AuthProvider>(context, listen: false).userId ?? '',
+        },
+        body: json.encode(aiMessage.toJson()),
+      );
+      
+      if (response.statusCode == 200) {
+        final savedMessageData = json.decode(response.body);
+        final savedMessage = Message.fromJson(savedMessageData);
+        _messages[0] = savedMessage.copyWith(
+          content: currentContent,
+          isComplete: true,
+          searchResults: searchResults,
+        );
+        
+        // 通知消息評分管理器更新ID映射
+        final messageRatingManager = Provider.of<MessageRatingManager>(context, listen: false);
+        messageRatingManager.updateMessageId(aiMessage.id, savedMessage.id);
+      }
+      
       await conversationProvider.saveMessage(_messages[0]);
     }
 
@@ -1058,30 +986,109 @@ Future<String> _generateSearchKeywords(String content) async {
 
 Future<List<SearchResult>> _performSearch(String query) async {
   try {
-    final response = await http.get(
-      Uri.parse(Env.searchEndpoint(query)),
-      headers: {
+    debugPrint('Performing search with query: $query');
+    
+    final url = Uri.parse('${Env.searchApiUrl}/search').replace(
+      queryParameters: {
+        'q': query,
+        'format': 'json',
+      },
+    );
+    
+    debugPrint('Search URL: $url');
+
+    final Map<String, String> headers;
+    if (kIsWeb) {
+      // Web 平台的特定設置
+      headers = {
         'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        // 添加 CORS 相關標頭
+        'Origin': Uri.base.origin,
+        'Access-Control-Allow-Origin': '*',
+      };
+    } else {
+      // iOS/Android 平台的設置
+      headers = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+    }
+
+    final response = await http.get(
+      url,
+      headers: headers,
+    ).timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        debugPrint('Search request timed out');
+        return http.Response('{"results":[]}', 408);
       },
     );
 
     if (response.statusCode == 200) {
+      debugPrint('Search response body: ${response.body}');
       final data = jsonDecode(response.body);
+      
       if (data['results'] != null) {
-        return (data['results'] as List)
+        final results = (data['results'] as List)
           .where((result) => 
             result['url'] != null && 
             result['title'] != null && 
             result['content'] != null &&
             result['content'].toString().isNotEmpty &&
             result['engine'] != null)
-          .map((result) => SearchResult.fromJson(result))
+          .map((result) {
+            try {
+              final uri = Uri.parse(result['url'] as String);
+              return <String, dynamic>{
+                'url': result['url'] as String,
+                'title': result['title'] as String,
+                'content': result['content'] as String,
+                'engine': result['engine'] as String,
+                'engines': (result['engines'] ?? [result['engine']]) as List<dynamic>,
+                'favicon': 'https://www.google.com/s2/favicons?domain=${uri.host}',
+                if (result['thumbnail'] != null) 'thumbnail': result['thumbnail'] as String,
+              };
+            } catch (e) {
+              debugPrint('Error processing result: $e');
+              return null;
+            }
+          })
+          .where((result) => result != null)
+          .map((enrichedResult) => SearchResult.fromJson(enrichedResult!))
           .toList();
+
+        debugPrint('Found ${results.length} search results');
+
+        if (_messages.isNotEmpty) {
+          _messages[0] = _messages[0].copyWith(
+            searchResults: results,
+          );
+          notifyListeners();
+        }
+
+        return results;
       }
+    } else {
+      debugPrint('Search failed with status code: ${response.statusCode}');
+      debugPrint('Response headers: ${response.headers}');
+      debugPrint('Response body: ${response.body}');
     }
+    
     return [];
-  } catch (e) {
+  } catch (e, stack) {
     debugPrint('Error performing search: $e');
+    debugPrint('Stack trace: $stack');
+    
+    if (_messages.isNotEmpty) {
+      _messages[0] = _messages[0].copyWith(
+        searchResults: const [],
+      );
+      notifyListeners();
+    }
+    
     return [];
   }
 }
@@ -1280,26 +1287,39 @@ Future<void> _handleRegenerationComplete(
   String? oldVersionRating
 ) async {
   try {
-    // 添加新版本
     versions.add(currentContent);
     
-    // 更新消息
+    debugPrint('Completing regeneration with ratings: $currentRating');
+    
+    // 處理評分數據
+    Map<String, dynamic>? updatedRating = currentRating;
+    if (currentRating != null) {
+      updatedRating = Map<String, dynamic>.from(currentRating);
+      // 為新版本設置舊版本的評分
+      if (oldVersionRating != null) {
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        final newVersionKey = '${authProvider.userId}_${versions.length - 1}';
+        updatedRating[newVersionKey] = oldVersionRating;
+      }
+    }
+    
     _messages[index] = _messages[index].copyWith(
       content: currentContent,
       isComplete: true,
       contentVersions: versions,
       currentVersion: versions.length - 1,
-      userRating: currentRating,
+      userRating: updatedRating,
     );
 
-    // 保存到服务器
     if (!isTrialMode) {
+      debugPrint('Saving regenerated message with ratings: $updatedRating');
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
       await conversationProvider.saveMessage(_messages[index]);
 
-      await Future.delayed(const Duration(milliseconds: 100));
-
-      // 获取保存的消息
+      // 延遲以確保伺服器處理完成
+      await Future.delayed(const Duration(milliseconds: 200));
+      
+      // 重新載入以確保數據同步
       final response = await http.get(
         Uri.parse('${_conversationUrl}/conversations/$_currentConversationId/messages'),
         headers: {
@@ -1310,6 +1330,8 @@ Future<void> _handleRegenerationComplete(
 
       if (response.statusCode == 200) {
         final List<dynamic> messages = json.decode(response.body);
+        debugPrint('Reloaded messages after regeneration');
+        
         final savedMessage = messages.firstWhere(
           (msg) => 
             msg['content'] == currentContent && 
@@ -1319,26 +1341,18 @@ Future<void> _handleRegenerationComplete(
         );
 
         if (savedMessage != null) {
+          debugPrint('Found saved message with ratings: ${savedMessage['userRating']}');
           _messages[index] = Message.fromJson(savedMessage).copyWith(
             content: currentContent,
             isComplete: true,
             contentVersions: versions,
             currentVersion: versions.length - 1,
-            userRating: currentRating,
+            userRating: savedMessage['userRating'] ?? updatedRating,
           );
-          
-          // 如果原版本有評分，應用到新版本
-          if (oldVersionRating != null) {
-            final newVersion = (versions.length - 1).toString();
-            Map<String, dynamic> newRatings = Map<String, dynamic>.from(currentRating ?? {});
-            newRatings[newVersion] = oldVersionRating;
-            await rateMessage(_messages[index].id, oldVersionRating);
-          }
         }
       }
     }
 
-    // 如果是第一條消息且只有兩條消息，重新生成標題
     if (index == 0 && _messages.length == 2) {
       debugPrint('Regenerating title after response update');
       await Future.delayed(const Duration(milliseconds: 100));

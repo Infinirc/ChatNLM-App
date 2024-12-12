@@ -14,6 +14,8 @@ import '../providers/auth_provider.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:typed_data';
 import 'dart:convert';
+import '../providers/conversation_provider.dart';
+import '../widgets/message_rating.dart';
 class _CopyButton extends StatefulWidget {
   final String content;
 
@@ -73,7 +75,7 @@ class _CopyButtonState extends State<_CopyButton> with SingleTickerProviderState
         child: Icon(
           _isCopied ? Icons.check : Icons.copy,
           key: ValueKey<bool>(_isCopied),
-          size: 20,
+          size: 16,
           color: Colors.grey[400],
         ),
       ),
@@ -258,7 +260,6 @@ void _showSearchResults(BuildContext context) {
     isScrollControlled: true,
     builder: (context) => Stack(
       children: [
-        // 透明背景層用於處理點擊事件
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
@@ -268,13 +269,12 @@ void _showSearchResults(BuildContext context) {
             ),
           ),
         ),
-        // 內容層
         DraggableScrollableSheet(
           initialChildSize: 0.6,
           minChildSize: 0.3,
           maxChildSize: 0.9,
           builder: (context, scrollController) => GestureDetector(
-            onTap: () {}, // 防止點擊內容區域時關閉
+            onTap: () {},
             child: Container(
               decoration: BoxDecoration(
                 color: isDarkMode ? Colors.grey[900] : Colors.white,
@@ -325,8 +325,6 @@ void _showSearchResults(BuildContext context) {
                       itemCount: message.searchResults?.length ?? 0,
                       itemBuilder: (context, index) {
                         final result = message.searchResults![index];
-                        final uri = Uri.parse(result.url);
-                        final favicon = 'https://www.google.com/s2/favicons?domain=${uri.host}';
                         
                         return Container(
                           margin: const EdgeInsets.only(bottom: 16),
@@ -343,18 +341,29 @@ void _showSearchResults(BuildContext context) {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   ListTile(
-                                    leading: ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: Image.network(
-                                        favicon,
-                                        width: 20,
-                                        height: 20,
-                                        errorBuilder: (context, error, stackTrace) => Icon(
-                                          Icons.public,
-                                          size: 20,
-                                          color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-                                        ),
+                                    leading: Container(
+                                      width: 36,
+                                      height: 36,
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(8),
                                       ),
+                                      child: _isSpecialEngine(result.engine)
+                                        ? _buildCustomIcon(result.engine)
+                                        : Image.network(
+                                            result.favicon ?? '',
+                                            width: 20,
+                                            height: 20,
+                                            errorBuilder: (context, error, stackTrace) {
+                                              debugPrint('Error loading favicon: $error for URL: ${result.favicon}');
+                                              return Icon(
+                                                Icons.public,
+                                                size: 20,
+                                                color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                                              );
+                                            },
+                                          ),
                                     ),
                                     title: Text(
                                       result.title,
@@ -364,7 +373,7 @@ void _showSearchResults(BuildContext context) {
                                       ),
                                     ),
                                     subtitle: Text(
-                                      uri.host,
+                                      Uri.parse(result.url).host,
                                       style: TextStyle(
                                         color: Colors.blue[isDarkMode ? 300 : 600],
                                         fontSize: 12,
@@ -400,6 +409,40 @@ void _showSearchResults(BuildContext context) {
         ),
       ],
     ),
+  );
+}
+
+// 添加這些輔助方法
+bool _isSpecialEngine(String engine) {
+  return ['langchain', 'nvidia', 'proxmox'].contains(engine.toLowerCase());
+}
+
+Widget _buildCustomIcon(String engine) {
+  IconData iconData;
+  Color color;
+  
+  switch (engine.toLowerCase()) {
+    case 'langchain':
+      iconData = Icons.auto_awesome;
+      color = Colors.purple;
+      break;
+    case 'nvidia':
+      iconData = Icons.memory;
+      color = Colors.green;
+      break;
+    case 'proxmox':
+      iconData = Icons.storage;
+      color = Colors.orange;
+      break;
+    default:
+      iconData = Icons.public;
+      color = Colors.blue;
+  }
+
+  return Icon(
+    iconData,
+    color: color,
+    size: 20,
   );
 }
 // 添加 URL 啟動方法
@@ -794,93 +837,109 @@ if (!message.isUser)
 if (!message.isUser) ...[
   const SizedBox(height: 4),
   Row(
-    mainAxisAlignment: MainAxisAlignment.end,
+    mainAxisAlignment: MainAxisAlignment.end,  // 確保在右邊
+    mainAxisSize: MainAxisSize.max,  // 使用最大寬度
     children: [
-      if (message.contentVersions != null && message.contentVersions!.length > 1) ...[
-        IconButton(
-          icon: const Icon(Icons.chevron_left, size: 20),
-          color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-          onPressed: message.currentVersion > 0
-              ? () => Provider.of<ChatProvider>(context, listen: false)
-                  .switchMessageVersion(message.id, message.currentVersion - 1)
-              : null,
-          splashRadius: 24,
-          tooltip: '上一個版本',
-        ),
-        Text(
-          "${message.currentVersion + 1}/${message.contentVersions!.length}",
-          style: TextStyle(
-            color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-            fontSize: 12,
-          ),
-        ),
-        IconButton(
-          icon: const Icon(Icons.chevron_right, size: 20), 
-          color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-          onPressed: message.currentVersion < message.contentVersions!.length - 1
-              ? () => Provider.of<ChatProvider>(context, listen: false)
-                  .switchMessageVersion(message.id, message.currentVersion + 1)
-              : null,
-          splashRadius: 24,
-          tooltip: '下一個版本',
-        ),
-      ],
-      
-      // 只在消息完成時才顯示評分按鈕
-      if (message.isComplete) ...[
-        Consumer2<AuthProvider, ChatProvider>(
-          builder: (context, authProvider, chatProvider, _) {
-            final userId = authProvider.userId ?? '';
-            final ratingKey = '${userId}_${message.currentVersion}';
-            final currentRating = message.userRating?[ratingKey];
+      const Expanded(child: SizedBox()),  // 添加這行，將按鈕推到右邊
+      Container(
+        margin: const EdgeInsets.only(right: 8.0),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (message.contentVersions != null && message.contentVersions!.length > 1) ...[
+              SizedBox(
+                width: 32,
+                height: 32,
+                child: IconButton(
+                  icon: const Icon(Icons.chevron_left, size: 16),
+                  color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                  onPressed: message.currentVersion > 0
+                      ? () => Provider.of<ChatProvider>(context, listen: false)
+                          .switchMessageVersion(message.id, message.currentVersion - 1)
+                      : null,
+                  splashRadius: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    maxWidth: 32,
+                    minHeight: 32,
+                    maxHeight: 32,
+                  ),
+                  tooltip: '上一個版本',
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Text(
+                  "${message.currentVersion + 1}/${message.contentVersions!.length}",
+                  style: TextStyle(
+                    color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 32,
+                height: 32,
+                child: IconButton(
+                  icon: const Icon(Icons.chevron_right, size: 16),
+                  color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                  onPressed: message.currentVersion < message.contentVersions!.length - 1
+                      ? () => Provider.of<ChatProvider>(context, listen: false)
+                          .switchMessageVersion(message.id, message.currentVersion + 1)
+                      : null,
+                  splashRadius: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    maxWidth: 32,
+                    minHeight: 32,
+                    maxHeight: 32,
+                  ),
+                  tooltip: '下一個版本',
+                ),
+              ),
+            ],
             
-            return Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: Icon(
-                    currentRating == 'like'
-                        ? Icons.thumb_up 
-                        : Icons.thumb_up_outlined,
-                    size: 20,
-                    color: currentRating == 'like'
-                        ? Colors.blue
-                        : (isDarkMode ? Colors.grey[400] : Colors.grey[600]),
-                  ),
-                  onPressed: () => chatProvider.rateMessage(message.id, 'like'),
-                  splashRadius: 24,
-                  tooltip: '讚',
-                ),
-                IconButton(
-                  icon: Icon(
-                    currentRating == 'dislike'
-                        ? Icons.thumb_down 
-                        : Icons.thumb_down_outlined,
-                    size: 20,
-                    color: currentRating == 'dislike'
-                        ? Colors.red
-                        : (isDarkMode ? Colors.grey[400] : Colors.grey[600]),
-                  ),
-                  onPressed: () => chatProvider.rateMessage(message.id, 'dislike'),
-                  splashRadius: 24,
-                  tooltip: '倒讚',
-                ),
-              ],
-            );
-          },
-        ),
-      ],
+            if (message.isComplete) ...[
+              Consumer<ConversationProvider>(
+                builder: (context, conversationProvider, _) {
+                  return MessageRating(
+                    message: message,
+                    conversationId: conversationProvider.currentConversation?.id ?? '',
+                  );
+                },
+              ),
+            ],
 
-      const SizedBox(width: 8),
-      IconButton(
-        icon: const Icon(Icons.refresh, size: 20),
-        color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-        onPressed: () => Provider.of<ChatProvider>(context, listen: false)
-            .regenerateResponse(message.id),
-        splashRadius: 24,
-        tooltip: '重新生成回應',
+            const SizedBox(width: 2),
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: IconButton(
+                icon: const Icon(Icons.refresh, size: 16),
+                color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                onPressed: () => Provider.of<ChatProvider>(context, listen: false)
+                    .regenerateResponse(message.id),
+                splashRadius: 16,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 32,
+                  maxWidth: 32,
+                  minHeight: 32,
+                  maxHeight: 32,
+                ),
+                tooltip: '重新生成回應',
+              ),
+            ),
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: _CopyButton(content: message.content),
+            ),
+          ],
+        ),
       ),
-      _CopyButton(content: message.content),
     ],
   ),
 ],

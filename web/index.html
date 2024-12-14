@@ -6,7 +6,7 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="ChatNLM - AI Chatbot">
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <!-- 添加 CSP 和跨域支持 -->
   <meta http-equiv="Content-Security-Policy" 
         content="default-src * self blob: data: gap:; 
@@ -99,6 +99,15 @@
       }
     });
 
+    function updateViewportHeight() {
+        let vh = window.innerHeight * 0.01;
+        document.documentElement.style.setProperty('--vh', `${vh}px`);
+      }
+      window.addEventListener('resize', updateViewportHeight);
+      window.addEventListener('orientationchange', updateViewportHeight);
+      updateViewportHeight();
+
+
     // Flutter Web 初始化
     window.addEventListener('load', function(ev) {
       // 下載主要的 dart.js
@@ -155,12 +164,15 @@
   </script>
 
   <style>
-    body {
+
+html, body {
       height: 100vh;
+      height: calc(var(--vh, 1vh) * 100);
       margin: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      padding: 0;
+      overflow: hidden;
+    }
+    body {
       transition: background-color 0.3s ease;
     }
 
@@ -209,6 +221,7 @@
         border-color: #000000;
       }
     }
+    
   </style>
 </head>
 <body>

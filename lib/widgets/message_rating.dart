@@ -17,7 +17,18 @@ class MessageRating extends StatelessWidget {
 
   Map<String, String>? _convertRating(Map<String, dynamic>? rating) {
     if (rating == null) return null;
-    return rating.map((key, value) => MapEntry(key, value.toString()));
+    
+    try {
+      // 轉換並保留所有評分數據
+      final convertedRating = rating.map(
+        (key, value) => MapEntry(key, value.toString())
+      );
+      debugPrint('轉換評分數據: $convertedRating');
+      return convertedRating;
+    } catch (e) {
+      debugPrint('評分數據轉換錯誤: $e');
+      return null;
+    }
   }
 
   @override
@@ -25,35 +36,56 @@ class MessageRating extends StatelessWidget {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     return Consumer2<AuthProvider, MessageRatingManager>(
-      builder: (context, authProvider, ratingManager, child) {  // 添加 child 参数
+      builder: (context, authProvider, ratingManager, _) {
         final userId = authProvider.userId ?? '';
-        final currentRating = ratingManager.getRating(
-          message.id,
-          userId,
-          message.currentVersion,
-        );
+        
+        // 從消息和緩存中獲取評分數據
+        String? currentRating;
+        Map<String, String>? allRatings;
+        
+        if (message.id.isNotEmpty) {
+          // 優先使用緩存中的評分
+          currentRating = ratingManager.getRating(
+            message.id,
+            userId,
+            message.currentVersion,
+          );
+          
+          // 獲取所有評分數據
+          allRatings = message.userRating != null 
+              ? _convertRating(message.userRating)
+              : ratingManager.getAllRatings(message.id);
+              
+          debugPrint('構建評分組件:');
+          debugPrint('- 消息ID: ${message.id}');
+          debugPrint('- 版本: ${message.currentVersion}');
+          debugPrint('- 當前評分: $currentRating');
+          debugPrint('- 所有評分: $allRatings');
+        }
 
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
               icon: Icon(
-                currentRating == 'like' 
-                    ? Icons.thumb_up 
+                currentRating == 'like'
+                    ? Icons.thumb_up
                     : Icons.thumb_up_outlined,
                 size: 16,
                 color: currentRating == 'like'
                     ? Colors.blue
                     : (isDarkMode ? Colors.grey[400] : Colors.grey[600]),
               ),
-              onPressed: () => ratingManager.rateMessage(
-                messageId: message.id,
-                conversationId: conversationId,
-                userId: userId,
-                rating: 'like',
-                version: message.currentVersion,
-                currentRating: _convertRating(message.userRating),
-              ),
+              onPressed: message.id.isEmpty ? null : () {
+                ratingManager.rateMessage(
+                  messageId: message.id,
+                  conversationId: conversationId,
+                  userId: userId,
+                  rating: 'like',
+                  version: message.currentVersion,
+                  currentRating: allRatings,
+                );
+              },
               splashRadius: 24,
               tooltip: '讚',
             ),
@@ -67,14 +99,16 @@ class MessageRating extends StatelessWidget {
                     ? Colors.red
                     : (isDarkMode ? Colors.grey[400] : Colors.grey[600]),
               ),
-              onPressed: () => ratingManager.rateMessage(
-                messageId: message.id,
-                conversationId: conversationId,
-                userId: userId,
-                rating: 'dislike',
-                version: message.currentVersion,
-                currentRating: _convertRating(message.userRating),
-              ),
+              onPressed: message.id.isEmpty ? null : () {
+                ratingManager.rateMessage(
+                  messageId: message.id,
+                  conversationId: conversationId,
+                  userId: userId,
+                  rating: 'dislike',
+                  version: message.currentVersion,
+                  currentRating: allRatings,
+                );
+              },
               splashRadius: 24,
               tooltip: '倒讚',
             ),

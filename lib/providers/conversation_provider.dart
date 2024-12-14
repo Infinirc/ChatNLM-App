@@ -380,24 +380,34 @@ Future<void> saveLocalMessage(String conversationId, Message message, {bool upda
   debugPrint('更新版本: $updateVersions');
   debugPrint('當前評分數據: ${message.userRating}');
   
-  final existingIndex = _localMessages[conversationId]!.indexWhere((m) => 
-    m.timestamp.isAtSameMomentAs(message.timestamp) && 
-    m.role == message.role
-  );
+final existingIndex = _localMessages[conversationId]!.indexWhere((m) => 
+  // 不只比較時間戳相同，還要考慮微秒級別的差異
+  m.timestamp.microsecondsSinceEpoch == message.timestamp.microsecondsSinceEpoch && 
+  m.role == message.role
+);
   
   if (existingIndex != -1) {
     final existing = _localMessages[conversationId]![existingIndex];
     
     // 處理版本和評分
     List<String> versions;
-    Map<String, dynamic>? ratings = {};
+    Map<String, dynamic> ratings = {};
     
-    // 合併現有評分數據
+    // 先保留現有所有評分
     if (existing.userRating != null) {
       ratings.addAll(existing.userRating!);
+      debugPrint('保留已有評分數據: $ratings');
     }
+
+    // 再加入新的評分數據（如果有的話）
     if (message.userRating != null) {
-      ratings.addAll(message.userRating!);
+      // 遍歷所有新的評分數據
+      message.userRating!.forEach((key, value) {
+        if (!ratings.containsKey(key) || ratings[key] != value) {
+          ratings[key] = value;
+          debugPrint('添加/更新評分: $key = $value');
+        }
+      });
     }
     
     if (updateVersions) {
@@ -409,10 +419,24 @@ Future<void> saveLocalMessage(String conversationId, Message message, {bool upda
         debugPrint('創建新的版本列表');
       }
       
+      // 添加新版本前，檢查並保存當前版本的評分
+      final currentVersionKey = '${userId}_${existing.currentVersion}';
+      String? currentVersionRating = existing.userRating?[currentVersionKey];
+      
       // 添加新版本
       if (!versions.contains(message.content.trim())) {
         versions.add(message.content.trim());
         debugPrint('添加新版本: ${versions.length - 1}');
+        
+        // 如果有當前版本的評分，保留給新版本
+        if (currentVersionRating != null) {
+          final newVersionKey = '${userId}_${versions.length - 1}';
+          // 只在新版本沒有評分時才設置
+          if (!ratings.containsKey(newVersionKey)) {
+            ratings[newVersionKey] = currentVersionRating;
+            debugPrint('將當前版本評分複製到新版本: $newVersionKey = $currentVersionRating');
+          }
+        }
       }
     } else {
       // 保持現有版本列表
@@ -455,21 +479,24 @@ Future<void> saveLocalMessage(String conversationId, Message message, {bool upda
     final currentVersion = message.currentVersion >= 0 ? 
       message.currentVersion.clamp(0, versions.length - 1) : 
       0;
+// 需要改成更精確的時間戳
+final newMessage = Message(
+  id: message.id,
+  content: versions[currentVersion],
+  contentVersions: versions,
+  currentVersion: currentVersion,
+  isComplete: message.isComplete,
+  isUser: message.isUser,
+  role: message.role,
+  // 使用微秒級時間戳以確保順序
+  timestamp: DateTime.now().toUtc(), // 這裡改用 UTC 時間
+  userRating: message.userRating,
+  searchResults: message.searchResults,
+  images: message.images
+);
     
-    final newMessage = Message(
-      id: message.id,
-      content: versions[currentVersion],
-      contentVersions: versions,
-      currentVersion: currentVersion,
-      isComplete: message.isComplete,
-      isUser: message.isUser,
-      role: message.role,
-      timestamp: message.timestamp,
-      userRating: message.userRating,
-      searchResults: message.searchResults,
-      images: message.images
-    );
-    
+
+
     _localMessages[conversationId]!.add(newMessage);
     debugPrint('添加新消息：');
     debugPrint('- 版本數: ${versions.length}');
@@ -477,16 +504,64 @@ Future<void> saveLocalMessage(String conversationId, Message message, {bool upda
     debugPrint('- 評分數據: ${message.userRating}');
   }
   
-  _localMessages[conversationId]!.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-  notifyListeners();
+// 在 saveLocalMessage 方法的最後，替換原有的排序代碼
+_localMessages[conversationId]!.sort((a, b) {
+  // 首先按時間戳降序排序
+  final timeCompare = b.timestamp.compareTo(a.timestamp);
+  if (timeCompare != 0) return timeCompare;
+  
+  // 時間戳相同時，用戶消息優先
+  if (a.isUser != b.isUser) {
+    return a.isUser ? -1 : 1;
+  }
+  
+  // 如果都是AI回覆，未完成的排在前面
+  if (!a.isUser && !b.isUser) {
+    if (a.isComplete != b.isComplete) {
+      return a.isComplete ? 1 : -1;
+    }
+  }
+  
+  // 最後按ID排序保持穩定性
+  return (b.id ?? '').compareTo(a.id ?? '');
+});
+
+
+
+
+notifyListeners();
+
 }
 List<Message>? getLocalMessages(String conversationId) {
   if (!_localMessages.containsKey(conversationId)) return null;
   
   final messages = List<Message>.from(_localMessages[conversationId]!);
-  messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  
+messages.sort((a, b) {
+  // 首先檢查消息完整性
+  if (!a.isComplete && !b.isComplete) {
+    // 若都未完成，保持原有順序
+    return 0;
+  }
+  if (!a.isComplete) return -1;  // 未完成的排在前面
+  if (!b.isComplete) return 1;
 
-  // 確保所有消息都有正確的版本信息
+  // 再按時間戳排序（使用微秒級比較）
+  final timeCompare = b.timestamp.microsecondsSinceEpoch.compareTo(
+    a.timestamp.microsecondsSinceEpoch
+  );
+  if (timeCompare != 0) return timeCompare;
+  
+  // 時間戳相同時，維持用戶消息和回覆的順序
+  if (a.isUser != b.isUser) {
+    return a.isUser ? -1 : 1;
+  }
+  
+  // 如果還是相同，使用ID保持穩定性
+  return (b.id ?? '').compareTo(a.id ?? '');
+});
+
+  // 處理版本信息
   final processedMessages = messages.map((message) {
     if (message.contentVersions == null || message.contentVersions!.isEmpty) {
       debugPrint('Adding version history to message: ${message.id}');

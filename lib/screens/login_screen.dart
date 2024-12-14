@@ -17,6 +17,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
   bool _isLoading = false;
+  bool _isAnimating = true;  // 新增動畫控制變量
   late final List<String> _phrases = [
     'Write code.',
     'Search web.',
@@ -32,56 +33,65 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
 
-@override
-void initState() {
-  super.initState();
-  _startTypingAnimation();
-  
-  _controller = AnimationController(
-    duration: const Duration(seconds: 2),
-    vsync: this,
-  )..repeat(reverse: true);
+  @override
+  void initState() {
+    super.initState();
+    _startTypingAnimation();
+    
+    _controller = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    )..repeat(reverse: true);
 
-  _scaleAnimation = Tween<double>(
-    begin: 1.0,
-    end: 1.05,
-  ).animate(CurvedAnimation(
-    parent: _controller,
-    curve: Curves.easeInOut,
-  ));
-}
+    _scaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.05,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    ));
+  }
 
   @override
   void dispose() {
+    _isAnimating = false;  // 停止動畫循環
     _controller.dispose();
     super.dispose();
   }
 
   Future<void> _startTypingAnimation() async {
-    while (mounted) {
-      if (_shouldPause) {
-        await Future.delayed(const Duration(milliseconds: 1000));
-        _shouldPause = false;
-      }
-
-      if (_isTyping) {
-        if (_currentCharIndex < _phrases[_currentPhraseIndex].length) {
-          setState(() {
-            _currentText += _phrases[_currentPhraseIndex][_currentCharIndex];
-            _currentCharIndex++;
-          });
-          await Future.delayed(const Duration(milliseconds: 80));
-        } else {
-          _isTyping = false;
-          _shouldPause = true;
-          await Future.delayed(const Duration(milliseconds: 800));
-          setState(() {
-            _currentText = '';
-            _currentCharIndex = 0;
-            _currentPhraseIndex = (_currentPhraseIndex + 1) % _phrases.length;
-          });
-          _isTyping = true;
+    while (_isAnimating && mounted) {
+      try {
+        if (_shouldPause) {
+          await Future.delayed(const Duration(milliseconds: 1000));
+          if (!mounted || !_isAnimating) return;
+          _shouldPause = false;
         }
+
+        if (_isTyping) {
+          if (_currentCharIndex < _phrases[_currentPhraseIndex].length) {
+            if (!mounted || !_isAnimating) return;
+            setState(() {
+              _currentText += _phrases[_currentPhraseIndex][_currentCharIndex];
+              _currentCharIndex++;
+            });
+            await Future.delayed(const Duration(milliseconds: 80));
+          } else {
+            _isTyping = false;
+            _shouldPause = true;
+            await Future.delayed(const Duration(milliseconds: 800));
+            if (!mounted || !_isAnimating) return;
+            setState(() {
+              _currentText = '';
+              _currentCharIndex = 0;
+              _currentPhraseIndex = (_currentPhraseIndex + 1) % _phrases.length;
+            });
+            _isTyping = true;
+          }
+        }
+      } catch (e) {
+        debugPrint('Animation error: $e');
+        break;
       }
     }
   }
@@ -94,59 +104,48 @@ Future<void> _handleLogin(BuildContext context) async {
   });
 
   try {
-    final result = await context.read<AuthProvider>().login();
+    final authProvider = context.read<AuthProvider>();
+    // 嘗試獲取當前的 ChatProvider（如果存在）並重置
+    try {
+      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+      await chatProvider.resetGenerationState();
+    } catch (e) {
+      debugPrint('No existing ChatProvider to reset');
+    }
+    
+    final result = await authProvider.login();
     
     if (result && mounted) {
-      // 獲取當前的 AuthProvider
-      final authProvider = context.read<AuthProvider>();
-
-      // 等待所有 provider 狀態準備好
-      await Future.delayed(const Duration(milliseconds: 300));
+      await authProvider.refreshAuthState();
       
       if (mounted) {
-        // 使用新的 Provider 樹重建應用，但確保正確的初始化順序
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (context) => FutureBuilder(
-              future: Future.delayed(const Duration(milliseconds: 200)), // 給予額外時間初始化
-              builder: (context, snapshot) {
-                return MultiProvider(
-                  providers: [
-                    // 保持現有的 AuthProvider
-                    ChangeNotifierProvider<AuthProvider>.value(
-                      value: authProvider,
-                    ),
-                    // 建立新的 Provider，確保順序正確
-                    ChangeNotifierProxyProvider<AuthProvider, ConversationProvider>(
-                      create: (context) => ConversationProvider(
-                        baseUrl: Env.conversationApiUrl,
-                        userId: authProvider.userId ?? '',
-                      ),
-                      update: (context, auth, previous) => previous ?? ConversationProvider(
-                        baseUrl: Env.conversationApiUrl,
-                        userId: auth.userId ?? '',
-                      ),
-                    ),
-                    // 聊天 Provider 依賴於對話 Provider
-                    ChangeNotifierProxyProvider<ConversationProvider, ChatProvider>(
-                      create: (context) => ChatProvider(
-                        context,
-                        baseUrl: Env.llmApiUrl,
-                        conversationUrl: Env.conversationApiUrl,
-                      ),
-                      update: (context, conversation, previous) => previous ?? ChatProvider(
-                        context,
-                        baseUrl: Env.llmApiUrl,
-                        conversationUrl: Env.conversationApiUrl,
-                      ),
-                    ),
-                  ],
-                  child: const ChatScreen(),
-                );
-              },
+            builder: (context) => ChangeNotifierProvider<ConversationProvider>(
+              create: (context) => ConversationProvider(
+                baseUrl: Env.conversationApiUrl,
+                userId: authProvider.userId ?? '',
+              )..loadConversations(),
+              child: ChangeNotifierProvider<ChatProvider>(
+                create: (context) => ChatProvider(
+                  context,
+                  baseUrl: Env.llmApiUrl,
+                  conversationUrl: Env.conversationApiUrl,
+                  isTrialMode: false,
+                ),
+                child: Consumer<AuthProvider>(
+                  builder: (context, auth, _) => const ChatScreen(),
+                ),
+              ),
             ),
           ),
           (route) => false,
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Login failed. Please try again.')),
         );
       }
     }
@@ -165,16 +164,73 @@ Future<void> _handleLogin(BuildContext context) async {
     }
   }
 }
-
 void _handleTrial(BuildContext context) async {
-  final authProvider = context.read<AuthProvider>();
-  authProvider.enterTrialMode();
-  
-  // 使用新的導航方法
-  if (mounted) {
-    _navigateToChatScreen(true);  // 傳入試用模式標記
+  try {
+    debugPrint('Handling trial mode transition...');
+    
+    // 先重置 ChatProvider（如果存在）
+    try {
+      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+      await chatProvider.resetForTrialMode();
+    } catch (e) {
+      debugPrint('No existing ChatProvider to reset');
+    }
+    
+    // 清理 ConversationProvider（如果存在）
+    try {
+      final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      conversationProvider.clearLocalMessages();
+    } catch (e) {
+      debugPrint('No existing ConversationProvider to clear');
+    }
+    
+    final authProvider = context.read<AuthProvider>();
+    await authProvider.enterTrialMode();
+    
+    // 等待足夠的時間確保所有狀態都已更新
+    await Future.delayed(const Duration(milliseconds: 200));
+    
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+            ChangeNotifierProvider<ConversationProvider>(
+              create: (context) => ConversationProvider(
+                baseUrl: Env.conversationApiUrl,
+                userId: authProvider.userId ?? '',
+                isTrialMode: true,
+              )..loadConversations(),
+              child: ChangeNotifierProvider<ChatProvider>(
+                create: (context) => ChatProvider(
+                  context,
+                  baseUrl: Env.llmApiUrl,
+                  conversationUrl: Env.conversationApiUrl,
+                  isTrialMode: true,
+                ),
+                child: const ChatScreen(),
+              ),
+            ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 300),
+        ),
+        (route) => false,
+      );
+    }
+  } catch (e) {
+    debugPrint('Error transitioning to trial mode: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to enter trial mode. Please try again.')),
+      );
+    }
   }
 }
+
 
 void _navigateToChatScreen(bool isTrialMode) {
   Navigator.of(context).pushAndRemoveUntil(

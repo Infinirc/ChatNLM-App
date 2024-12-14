@@ -105,18 +105,26 @@ class LatexSyntax extends md.InlineSyntax {
 class LatexElementBuilder extends MarkdownElementBuilder {
   @override
   Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
-    final isDarkMode = preferredStyle?.color == Colors.white;
-    
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Math.tex(
-        element.textContent,
-        textStyle: TextStyle(
-          color: isDarkMode ? Colors.white : const Color(0xFF2C2C2E),
-          fontSize: 16,
-        ),
-        mathStyle: MathStyle.display,
-      ),
+    return Builder(
+      builder: (context) {
+        // 使用 Theme 來獲取當前主題的文字顏色
+        final textColor = Theme.of(context).textTheme.bodyLarge?.color ??
+            (Theme.of(context).brightness == Brightness.dark
+                ? Colors.white
+                : const Color(0xFF2C2C2E));
+        
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8.0),
+          child: Math.tex(
+            element.textContent,
+            textStyle: TextStyle(
+              color: textColor,
+              fontSize: 16,
+            ),
+            mathStyle: MathStyle.display,
+          ),
+        );
+      },
     );
   }
 }

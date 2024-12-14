@@ -574,107 +574,232 @@ Widget _buildSourceIcon(BuildContext context, SearchResult result, bool isDarkMo
     );
   }
 
-// 修改 _buildImageWidget 方法
 Widget _buildImageWidget(String imagePath, bool isNetworkImage) {
-  // 檢查是否為 base64 圖片
-  if (imagePath.startsWith('data:image')) {
-    try {
-      // 解析 base64 圖片
-      final startIndex = imagePath.indexOf(',') + 1;
-      final bytes = base64Decode(imagePath.substring(startIndex));
-      return Image.memory(
-        bytes,
-        width: 200,
-        height: 200,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          debugPrint('Error loading base64 image: $error');
-          return _buildErrorBox();
-        },
-      );
-    } catch (e) {
-      debugPrint('Error decoding base64 image: $e');
-      return _buildErrorBox();
-    }
-  }
-
-  // 網絡圖片處理
-  if (isNetworkImage) {
-    return Consumer<AuthProvider>(
-      builder: (context, authProvider, child) {
-        return Image.network(
-          '${Env.conversationApiUrl}$imagePath',
+  return Consumer<ChatProvider>(
+    builder: (context, chatProvider, child) {
+      // 檢查緩存
+      final cachedData = chatProvider.getImageData(imagePath);
+      if (cachedData != null) {
+        return Image.memory(
+          cachedData.bytes,
           width: 200,
           height: 200,
           fit: BoxFit.cover,
-          headers: {
-            'x-user-id': authProvider.userId ?? '',
-          },
+          gaplessPlayback: true,
           errorBuilder: (context, error, stackTrace) {
-            debugPrint('Error loading network image: $error');
+            debugPrint('Error loading cached image: $error');
             return _buildErrorBox();
           },
         );
       }
-    );
-  } 
-  
-  // Web 平台處理
-  if (kIsWeb) {
-    return Consumer<ChatProvider>(
-      builder: (context, chatProvider, child) {
-        final imageData = chatProvider.getImageData(imagePath);
-        if (imageData != null) {
+
+      // 處理 base64 格式圖片
+      if (imagePath.startsWith('data:image')) {
+        try {
+          final startIndex = imagePath.indexOf(',') + 1;
+          final bytes = base64Decode(imagePath.substring(startIndex));
+          
+          // 保存到緩存
+          chatProvider.storeImageData(
+            imagePath,
+            ImageData(
+              path: imagePath,
+              bytes: bytes,
+              fileName: 'base64_image.jpg',
+            ),
+          );
+
           return Image.memory(
-            imageData.bytes,
+            bytes,
             width: 200,
             height: 200,
             fit: BoxFit.cover,
+            gaplessPlayback: true,
             errorBuilder: (context, error, stackTrace) {
-              debugPrint('Error loading web image: $error');
+              debugPrint('Error loading base64 image: $error');
               return _buildErrorBox();
             },
           );
+        } catch (e) {
+          debugPrint('Error decoding base64 image: $e');
+          return _buildErrorBox();
         }
-        return _buildErrorBox();
-      },
-    );
-  }
-  
-  // 移動平台處理本地文件
-  try {
-    return Image.file(
-      File(imagePath),
-      width: 200,
-      height: 200,
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) {
-        // 如果本地文件讀取失敗，嘗試從 Provider 獲取緩存數據
-        return Consumer<ChatProvider>(
-          builder: (context, chatProvider, child) {
-            final imageData = chatProvider.getImageData(imagePath);
-            if (imageData != null) {
-              return Image.memory(
-                imageData.bytes,
+      }
+
+      // 網絡圖片處理
+// 網絡圖片處理
+if (isNetworkImage) {
+  return Consumer<AuthProvider>(
+    builder: (context, authProvider, child) {
+      return FutureBuilder(
+        future: Future.delayed(
+          const Duration(milliseconds: 800),
+          () => '${Env.conversationApiUrl}$imagePath',
+        ),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return Container(
+              width: 200,
+              height: 200,
+              decoration: BoxDecoration(
+                color: Theme.of(context).brightness == Brightness.dark 
+                  ? Colors.grey[850] 
+                  : Colors.grey[100],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: TweenAnimationBuilder(
+                duration: const Duration(milliseconds: 1500),
+                tween: Tween(begin: 0.0, end: 1.0),
+                builder: (context, double value, child) {
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // 旋轉的圓圈動畫
+                      Transform.rotate(
+                        angle: value * 2 * 3.14159,
+                        child: CircularProgressIndicator(
+                          value: null,
+                          strokeWidth: 2,
+                          backgroundColor: Colors.transparent,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.grey[700]
+                              : Colors.grey[300],
+                        ),
+                      ),
+                      // 透明度動畫
+                      Opacity(
+                        opacity: (value * 2).clamp(0.0, 1.0),
+                        child: const Icon(
+                          Icons.image_outlined,
+                          size: 32,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            );
+          }
+
+          return Image.network(
+            snapshot.data!,
+            width: 200,
+            height: 200,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            headers: {
+              'x-user-id': authProvider.userId ?? '',
+            },
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Container(
                 width: 200,
                 height: 200,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  debugPrint('Error loading cached image: $error');
-                  return _buildErrorBox();
-                },
+                decoration: BoxDecoration(
+                  color: Theme.of(context).brightness == Brightness.dark 
+                    ? Colors.grey[850] 
+                    : Colors.grey[100],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      value: loadingProgress.expectedTotalBytes != null
+                        ? loadingProgress.cumulativeBytesLoaded / 
+                          loadingProgress.expectedTotalBytes!
+                        : null,
+                      strokeWidth: 2,
+                      backgroundColor: Colors.transparent,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).brightness == Brightness.dark
+                          ? Colors.grey[700]!
+                          : Colors.grey[300]!,
+                      ),
+                    ),
+                    const Icon(
+                      Icons.image_outlined,
+                      size: 32,
+                      color: Colors.grey,
+                    ),
+                  ],
+                ),
               );
-            }
+            },
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint('Error loading network image: $error');
+              return const Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    },
+  );
+}
+      
+      // Web 平台處理
+      if (kIsWeb) {
+        return Image.memory(
+          chatProvider.getImageData(imagePath)?.bytes ?? Uint8List(0),
+          width: 200,
+          height: 200,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Error loading web image: $error');
+            return _buildErrorBox();
+          },
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (wasSynchronouslyLoaded) return child;
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: frame != null ? child : _buildErrorBox(),
+            );
+          },
+        );
+      }
+      
+      // 移動平台處理本地文件
+      try {
+        final file = File(imagePath);
+        if (!file.existsSync()) {
+          debugPrint('Local file does not exist: $imagePath');
+          return _buildErrorBox();
+        }
+
+        return Image.file(
+          file,
+          width: 200,
+          height: 200,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (context, error, stackTrace) {
             debugPrint('Error loading local image: $error');
             return _buildErrorBox();
           },
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (wasSynchronouslyLoaded) return child;
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: frame != null ? child : _buildErrorBox(),
+            );
+          },
         );
-      },
-    );
-  } catch (e) {
-    debugPrint('Error handling local image: $e');
-    return _buildErrorBox();
-  }
+      } catch (e) {
+        debugPrint('Error handling local image: $e');
+        return _buildErrorBox();
+      }
+    },
+  );
 }
 
 // 添加一個輔助方法來建立錯誤提示框

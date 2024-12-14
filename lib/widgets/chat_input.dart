@@ -282,30 +282,83 @@ child: kIsWeb
                         ),
                         child: Row(
                           children: [
-                            IconButton(
-                              icon: Icon(
-                                Icons.add,
-                                color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  _showImagePicker = !_showImagePicker;
-                                });
-                              },
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                Icons.language,
-                                color: _isSearchEnabled
-                                    ? const Color(0xFF007AFF)
-                                    : (isDarkMode ? Colors.grey[400] : Colors.grey[600]),
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  _isSearchEnabled = !_isSearchEnabled;
-                                });
-                              },
-                            ),
+IconButton(
+  icon: Icon(
+    Icons.add,
+    color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+  ),
+  onPressed: () async {
+    final RenderBox button = context.findRenderObject() as RenderBox;
+    final Offset offset = button.localToGlobal(Offset.zero);
+    
+    final RelativeRect position = RelativeRect.fromLTRB(
+      offset.dx,
+      offset.dy + button.size.height,
+      offset.dx + button.size.width,
+      offset.dy + button.size.height,
+    );
+
+    await showMenu(
+      context: context,
+      position: position,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+      ),
+      color: isDarkMode ? Colors.grey[900] : Colors.white,
+      items: <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(
+          value: 'gallery',
+          child: ListTile(
+            leading: Icon(
+              Icons.photo_library,
+              color: isDarkMode ? Colors.white : Colors.black,
+            ),
+            title: Text(
+              '照片圖庫',
+              style: TextStyle(
+                color: isDarkMode ? Colors.white : Colors.black,
+              ),
+            ),
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'camera',
+          child: ListTile(
+            leading: Icon(
+              Icons.camera_alt,
+              color: isDarkMode ? Colors.white : Colors.black,
+            ),
+            title: Text(
+              '拍照',
+              style: TextStyle(
+                color: isDarkMode ? Colors.white : Colors.black,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ).then((String? value) {
+      if (value == 'gallery') {
+        _pickImage(ImageSource.gallery);
+      } else if (value == 'camera') {
+        _pickImage(ImageSource.camera);
+      }
+    });
+  },
+),
+                           IconButton(
+                             icon: Icon(
+                               Icons.language,
+                               color: _isSearchEnabled
+                                   ? const Color(0xFF007AFF)
+                                   : (isDarkMode ? Colors.grey[400] : Colors.grey[600]),
+                             ),
+                             onPressed: () {
+                               setState(() {
+                                 _isSearchEnabled = !_isSearchEnabled;
+                               });
+                             },
+                           ),
 Expanded(
   child: RawKeyboardListener(
     focusNode: FocusNode(),
@@ -430,46 +483,6 @@ Expanded(
                         ),
                       ),
                     ),
-                    if (_showImagePicker)
-                      Center(
-                        child: Container(
-                          constraints: const BoxConstraints(
-                            maxWidth: 700, // 和输入框保持一致的宽度
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              TextButton.icon(
-                                icon: Icon(
-                                  Icons.photo_library,
-                                  color: isDarkMode ? Colors.white : Colors.black,
-                                ),
-                                label: Text(
-                                  '相簿',
-                                  style: TextStyle(
-                                    color: isDarkMode ? Colors.white : Colors.black,
-                                  ),
-                                ),
-                                onPressed: () => _pickImage(ImageSource.gallery),
-                              ),
-                              TextButton.icon(
-                                icon: Icon(
-                                  Icons.camera_alt,
-                                  color: isDarkMode ? Colors.white : Colors.black,
-                                ),
-                                label: Text(
-                                  '相機',
-                                  style: TextStyle(
-                                    color: isDarkMode ? Colors.white : Colors.black,
-                                  ),
-                                ),
-                                onPressed: () => _pickImage(ImageSource.camera),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -547,38 +560,137 @@ void _handleSubmitted(String text) {
   if (!_isComposing) return;
   
   final message = text.replaceAll('\n', '\n\n');
-  // 修改圖片數據的處理方式
   final List<String> images = [];
+  final int imageCount = _selectedImages.length;
+
+  // 準備圖片數據
   for (var img in _selectedImages) {
     if (kIsWeb) {
-      // 對於 web 平台，將 bytes 轉換為 base64 字串
       final base64String = base64.encode(img.bytes!);
       images.add('data:image/png;base64,$base64String');
     } else {
       images.add(img.path);
     }
   }
-  
-  _controller.clear();
-  setState(() {
-    _selectedImages.clear();
-    _isComposing = false;
-    _showImagePicker = false;
-  });
 
+  // 如果有圖片，顯示進度指示器
+  if (imageCount > 0) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isDismissible: false, // 防止用戶關閉
+      builder: (BuildContext context) {
+        final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+        return SafeArea(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: isDarkMode ? Colors.grey[900] : Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  spreadRadius: 0,
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isDarkMode ? Colors.grey[800] : Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            isDarkMode ? Colors.blue[300]! : Colors.blue,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.image,
+                        size: 16,
+                        color: isDarkMode ? Colors.white70 : Colors.grey[600],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "圖片上傳中",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          color: isDarkMode ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        "$imageCount 張圖片處理中",
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: isDarkMode ? Colors.white60 : Colors.black54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // 清空輸入並發送消息
+  _controller.clear();
   _focusNode.unfocus();
 
-  Future.delayed(const Duration(milliseconds: 400), () {
+  Future.delayed(const Duration(milliseconds: 400), () async {
     if (!mounted) return;
-    
-    Provider.of<ChatProvider>(context, listen: false)
+
+    // 發送消息
+    await Provider.of<ChatProvider>(context, listen: false)
         .sendMessage(
           message, 
           images: images.isNotEmpty ? images : null,
           useSearch: _isSearchEnabled,
         );
     
-    if (_isDesktop) {
+    // 發送完成後再關閉進度指示器和清空圖片
+    if (imageCount > 0 && mounted) {
+      Navigator.of(context).pop();
+      setState(() {
+        _selectedImages.clear();
+        _isComposing = false;
+        _showImagePicker = false;
+      });
+    } else {
+      setState(() {
+        _selectedImages.clear();
+        _isComposing = false;
+        _showImagePicker = false;
+      });
+    }
+
+    // 如果是桌面端，重新獲取焦點
+    if (_isDesktop && mounted) {
       Future.delayed(const Duration(milliseconds: 100), () {
         if (mounted) {
           _focusNode.requestFocus();

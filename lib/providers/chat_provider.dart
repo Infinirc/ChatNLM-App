@@ -40,13 +40,7 @@ class ImageData {
 }
 
 class ChatProvider with ChangeNotifier {
-
-
-
-  // 添加图片数据缓存字段
   final Map<String, ImageData> _imageDataCache = {};
-
-  // 添加图片数据相关方法
   void storeImageData(String path, ImageData data) {
     _imageDataCache[path] = data;
     notifyListeners();
@@ -96,10 +90,27 @@ ChatProvider(
       '\nConversation URL: $_conversationUrl'
       '\nTrial Mode: $isTrialMode');
       
-  // 在初始化時清理臨時文件
-  _initCleanup();
+  // 只檢查是否有殘留文件，不立即清理
+  _checkResidualFiles();
 }
-
+Future<void> _checkResidualFiles() async {
+  try {
+    final tempDir = await getTemporaryDirectory();
+    final files = await tempDir.list().toList();
+    
+    final imageFiles = files.whereType<File>().where((file) => 
+      file.path.toLowerCase().endsWith('.jpg') ||
+      file.path.toLowerCase().endsWith('.jpeg') ||
+      file.path.toLowerCase().endsWith('.png')
+    ).toList();
+    
+    if (imageFiles.isNotEmpty) {
+      debugPrint('發現殘留的臨時圖片文件: ${imageFiles.length} 個');
+    }
+  } catch (e) {
+    debugPrint('檢查殘留文件時發生錯誤: $e');
+  }
+}
 Future<void> _connectWebSocket() async {
   try {
     // 先關閉舊的連接
@@ -302,17 +313,31 @@ Future<void> _handleTitleComplete(String title) async {
     debugPrint('Error handling title completion: $e');
   }
 }
-  Future<void> clearMessages() async {
-    debugPrint('Clearing messages');
-    if (_isGenerating) {
-      await stopGeneration();
-    }
-    
-    _messages.clear();
-    _currentConversationId = null;
-    notifyListeners();
-    debugPrint('Messages cleared');
+Future<void> resetGenerationState() async {
+  debugPrint('重置生成狀態');
+  _isGenerating = false;
+  if (_currentGeneration != null) {
+    await _currentGeneration!.cancel();
+    _currentGeneration = null;
   }
+  if (_channel != null) {
+    await _channel!.sink.close();
+    _channel = null;
+    _isConnected = false;
+  }
+  notifyListeners();
+}
+
+// 在已有的 clearMessages 方法中添加狀態重置
+Future<void> clearMessages() async {
+  debugPrint('Clearing messages');
+  await resetGenerationState();  // 添加這行
+  
+  _messages.clear();
+  _currentConversationId = null;
+  notifyListeners();
+  debugPrint('Messages cleared');
+}
 
   Future<void> stopGeneration() async {
     debugPrint('Stopping generation');
@@ -331,6 +356,34 @@ Future<void> _handleTitleComplete(String title) async {
     }
   }
 
+Future<void> resetForTrialMode() async {
+  debugPrint('Resetting ChatProvider for trial mode...');
+  
+  try {
+    // 停止所有進行中的操作
+    await resetGenerationState();
+    
+    // 清理消息和狀態
+    await clearMessages();
+    
+    // 重置所有標誌
+    _isGenerating = false;
+    _isLoadingMessages = false;
+    _currentConversationId = null;
+    
+    // 清理圖片緩存
+    _imageDataCache.clear();
+    
+    // 重新初始化其他必要的狀態
+    await loadModels();
+    
+    debugPrint('ChatProvider reset completed for trial mode');
+  } catch (e) {
+    debugPrint('Error resetting ChatProvider: $e');
+  } finally {
+    notifyListeners();
+  }
+}
 
 Future<void> loadConversationMessages(String conversationId) async {
 
@@ -539,7 +592,6 @@ Future<Map<String, String>?> _uploadImage(String imagePath) async {
     request.headers['x-user-id'] = authProvider.userId ?? '';
 
     if (kIsWeb && imagePath.startsWith('data:')) {
-      // 解析 data URL
       final mimeTypeEnd = imagePath.indexOf(';base64,');
       if (mimeTypeEnd == -1) {
         throw Exception('Invalid image data URL');
@@ -547,11 +599,8 @@ Future<Map<String, String>?> _uploadImage(String imagePath) async {
 
       final mimeType = imagePath.substring(5, mimeTypeEnd);
       final base64Data = imagePath.substring(mimeTypeEnd + 8);
-      
-      // 解码 base64 数据
       final bytes = base64Decode(base64Data);
       
-      // 根据 MIME 类型确定文件扩展名
       String extension = 'jpg';
       if (mimeType.endsWith('/png')) {
         extension = 'png';
@@ -573,7 +622,6 @@ Future<Map<String, String>?> _uploadImage(String imagePath) async {
       debugPrint('Extension: $extension');
       debugPrint('Data size: ${bytes.length} bytes');
     } else {
-      // 移动平台处理方式不变
       request.files.add(
         await http.MultipartFile.fromPath(
           'image',
@@ -612,7 +660,6 @@ Future<void> sendMessage(String content, {List<String>? images, bool useSearch =
 
     final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
     
-    // 確保有對話
     if (conversationProvider.currentConversation == null) {
       final conversation = await conversationProvider.createConversation('新對話');
       _currentConversationId = conversation.id;
@@ -627,8 +674,6 @@ Future<void> sendMessage(String content, {List<String>? images, bool useSearch =
     List<Map<String, String>>? processedImages;
     List<Map<String, dynamic>> messageContent = [];
   
-    // 處理圖片
-// 處理圖片
 if (images != null && images.isNotEmpty) {
   processedImages = [];
   for (final imagePath in images) {
@@ -636,7 +681,6 @@ if (images != null && images.isNotEmpty) {
       if (!isTrialMode) {
         debugPrint('Processing image for upload: $imagePath');
         
-        // 添加重试逻辑
         int retries = 3;
         Map<String, String>? uploadResult;
         
@@ -654,7 +698,6 @@ if (images != null && images.isNotEmpty) {
           processedImages.add(uploadResult);
           debugPrint('Image processed successfully');
 
-          // 为 LLM 准备图片内容
           if (kIsWeb) {
             messageContent.add({
               'type': 'image_url',
@@ -672,7 +715,6 @@ if (images != null && images.isNotEmpty) {
           debugPrint('Failed to upload image after all retries');
         }
       } else {
-        // 試用模式下的圖片處理
         if (kIsWeb) {
           processedImages.add({'url': imagePath});
           messageContent.add({
@@ -680,12 +722,10 @@ if (images != null && images.isNotEmpty) {
             'image_url': {'url': imagePath}
           });
         } else {
-          // 讀取本地圖片並轉換為 base64
           final bytes = await File(imagePath).readAsBytes();
           final base64Image = base64Encode(bytes);
           final base64Url = 'data:image/jpeg;base64,$base64Image';
           
-          // 保存圖片數據到緩存
           storeImageData(imagePath, ImageData(
             path: imagePath,
             bytes: bytes,
@@ -703,7 +743,6 @@ if (images != null && images.isNotEmpty) {
     } catch (e) {
       debugPrint('Error processing image: $e');
       if (isTrialMode) {
-        // 試用模式下的錯誤處理
         processedImages.add({'url': imagePath});
         messageContent.add({
           'type': 'image_url',
@@ -835,7 +874,7 @@ _currentGeneration = _channel!.stream.listen(
     if (data is String) {
       if (data.startsWith('data: [DONE]')) {
         // 收到完成信號，處理消息完成邏輯
-        _handleMessageComplete(currentContent, searchResults);
+        _handleMessageComplete(currentContent, searchResults); // 這裡沒有正確處理完成狀態
         return;
       }
       
@@ -889,6 +928,125 @@ _currentGeneration = _channel!.stream.listen(
     }
 }
 
+Future<void> _resetAllGenerationStates() async {
+  debugPrint('重置所有生成狀態');
+  _isGenerating = false;
+  if (_currentGeneration != null) {
+    await _currentGeneration!.cancel();
+    _currentGeneration = null;
+  }
+  if (_channel != null) {
+    await _channel!.sink.close();
+    _channel = null;
+  }
+  _isConnected = false;
+  notifyListeners();
+}
+Future<void> handleLogout() async {
+  debugPrint('處理登出程序...');
+  
+  try {
+    // 停止所有進行中的生成
+    if (_isGenerating) {
+      await stopGeneration();
+    }
+    
+    // 關閉 WebSocket 連接
+    if (_channel != null) {
+      await _channel!.sink.close();
+      _channel = null;
+      _isConnected = false;
+    }
+    
+    // 取消當前生成的訂閱
+    if (_currentGeneration != null) {
+      await _currentGeneration!.cancel();
+      _currentGeneration = null;
+    }
+    
+    // 重置所有狀態標誌
+    _isGenerating = false;
+    _isLoadingMessages = false;
+    
+    // 清理消息列表
+    _messages.clear();
+    _currentConversationId = null;
+    
+    // 清理圖片緩存
+    _imageDataCache.clear();
+    
+    // 清理臨時文件
+    final tempDir = await getTemporaryDirectory();
+    if (tempDir.existsSync()) {
+      final files = tempDir.listSync();
+      
+      for (var entity in files) {
+        if (entity is File && (
+          entity.path.toLowerCase().endsWith('.jpg') ||
+          entity.path.toLowerCase().endsWith('.jpeg') ||
+          entity.path.toLowerCase().endsWith('.png'))) {
+          try {
+            await entity.delete();
+            debugPrint('已刪除臨時文件: ${entity.path}');
+          } catch (e) {
+            debugPrint('刪除文件失敗: ${entity.path}, 錯誤: $e');
+          }
+        }
+      }
+    }
+    
+    // 確保模型資訊重新載入
+    await loadModels();
+    
+    debugPrint('登出處理完成，所有狀態已重置');
+  } catch (e) {
+    debugPrint('處理登出時發生錯誤: $e');
+  } finally {
+    notifyListeners();
+  }
+}
+
+Future<void> enterTrialMode() async {
+  debugPrint('進入試用模式，重置所有狀態...');
+  
+  try {
+    // 停止所有進行中的操作
+    if (_isGenerating) {
+      await stopGeneration();
+    }
+    
+    // 關閉現有的 WebSocket 連接
+    if (_channel != null) {
+      await _channel!.sink.close();
+      _channel = null;
+      _isConnected = false;
+    }
+    
+    // 取消現有的生成訂閱
+    if (_currentGeneration != null) {
+      await _currentGeneration!.cancel();
+      _currentGeneration = null;
+    }
+    
+    // 清理消息列表和狀態
+    _messages.clear();
+    _currentConversationId = null;
+    _isGenerating = false;
+    _isLoadingMessages = false;
+    
+    // 清理圖片緩存
+    _imageDataCache.clear();
+    
+    // 確保模型資訊重新載入
+    await loadModels();
+    
+    debugPrint('試用模式狀態重置完成');
+  } catch (e) {
+    debugPrint('重置試用模式狀態時發生錯誤: $e');
+  } finally {
+    notifyListeners();
+  }
+}
 Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? searchResults) async {
   try {
     debugPrint('處理訊息完成');
@@ -973,6 +1131,10 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
         _messages[0] = newMessage;
         debugPrint('創建新訊息：版本=1');
       }
+
+      // 確保試用模式下立即重置所有生成狀態
+      await _resetAllGenerationStates();
+
     } else {
       // 保持原有的非試用模式邏輯不變
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
@@ -1002,14 +1164,6 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
       await conversationProvider.saveMessage(_messages[0]);
     }
 
-    // 關閉 WebSocket 連接
-    _isGenerating = false;
-    if (_channel != null) {
-      await _channel!.sink.close();
-      _channel = null;
-      _isConnected = false;
-    }
-    
     // 處理標題生成
     if (_messages.length == 2) {
       debugPrint('準備生成標題');
@@ -1023,12 +1177,13 @@ Future<void> _handleMessageComplete(String currentContent, List<SearchResult>? s
       }
     }
 
-    notifyListeners();
   } catch (e) {
     debugPrint('處理訊息完成時發生錯誤：$e');
+    // 確保錯誤時也重置所有生成狀態
+    await _resetAllGenerationStates();
   } finally {
-    _isGenerating = false;
-    notifyListeners();
+    // 確保最後一定會重置所有生成狀態
+    await _resetAllGenerationStates();
   }
 }
 Future<String> _generateSearchKeywords(String content) async {
@@ -1226,14 +1381,18 @@ void switchMessageVersion(String messageId, int version) async {
   final index = _messages.indexWhere((msg) => msg.id == messageId);
   if (index != -1 && _messages[index].contentVersions != null) {
     if (version >= 0 && version < _messages[index].contentVersions!.length) {
-      // 保存當前的評分數據
-      final currentRatings = _messages[index].userRating;
-      
-      // 更新消息但保持版本列表不變
+      // 獲取當前所有評分數據
+      final Map<String, dynamic> allRatings = {};
+      if (_messages[index].userRating != null) {
+        allRatings.addAll(_messages[index].userRating!);
+        debugPrint('保留現有評分數據: $allRatings');
+      }
+
+      // 更新消息但保持評分數據不變
       _messages[index] = _messages[index].copyWith(
         content: _messages[index].contentVersions![version],
         currentVersion: version,
-        userRating: currentRatings,
+        userRating: allRatings.isEmpty ? null : allRatings,  // 保持所有評分數據
       );
       notifyListeners();
       
@@ -1243,18 +1402,18 @@ void switchMessageVersion(String messageId, int version) async {
         await conversationProvider.saveLocalMessage(
           _currentConversationId!,
           _messages[index],
-          updateVersions: false  // 不更新版本列表，只更新當前版本
+          updateVersions: false  // 不需要更新版本列表，只更新當前版本
         );
       } else {
         // 非試用模式的保存邏輯
         final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-        conversationProvider.saveMessage(_messages[index]);
+        await conversationProvider.saveMessage(_messages[index]);
       }
       
       debugPrint('版本切換完成：');
       debugPrint('- 當前版本: $version');
       debugPrint('- 總版本數: ${_messages[index].contentVersions!.length}');
-      debugPrint('- 評分數據: $currentRatings');
+      debugPrint('- 評分數據: ${allRatings}');
     }
   }
 }
@@ -1429,9 +1588,9 @@ Future<void> _handleRegenerationComplete(
   String? oldVersionRating
 ) async {
   try {
-    debugPrint('Starting regeneration completion');
-    debugPrint('Current rating data: $currentRating');
-    debugPrint('Old version rating: $oldVersionRating');
+    debugPrint('開始處理重新生成完成');
+    debugPrint('當前評分數據: $currentRating');
+    debugPrint('舊版本評分: $oldVersionRating');
 
     // 處理評分數據
     Map<String, dynamic> updatedRating = {};
@@ -1440,20 +1599,20 @@ Future<void> _handleRegenerationComplete(
     // 保存現有評分
     if (currentRating != null) {
       updatedRating.addAll(currentRating);
-      debugPrint('Preserved existing ratings: $updatedRating');
+      debugPrint('保留現有評分數據: $updatedRating');
     }
 
     // 添加新的版本
     if (!versions.contains(currentContent)) {
       versions.add(currentContent);
-      debugPrint('Added new version ${versions.length - 1}');
+      debugPrint('添加新版本: ${versions.length - 1}');
     }
 
     // 為新版本設置評分
     if (oldVersionRating != null) {
       final newVersionKey = '${authProvider.userId}_${versions.length - 1}';
       updatedRating[newVersionKey] = oldVersionRating;
-      debugPrint('Added rating for new version: $newVersionKey = $oldVersionRating');
+      debugPrint('添加評分到新版本: $newVersionKey = $oldVersionRating');
     }
 
     // 創建更新後的消息
@@ -1472,15 +1631,13 @@ Future<void> _handleRegenerationComplete(
     );
 
     if (isTrialMode) {
-      // 試用模式處理
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
       
-      // 保存到本地存儲
+      // 保存到本地存儲，使用正確的參數
       await conversationProvider.saveLocalMessage(
         _currentConversationId!,
         updatedMessage,
-        updateVersions: true,    // 更新版本列表
-
+        updateVersions: true
       );
       
       // 重新載入消息
@@ -1490,20 +1647,18 @@ Future<void> _handleRegenerationComplete(
         _messages.addAll(localMessages);
         _messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
         
-        debugPrint('Reloaded messages in trial mode:');
+        debugPrint('重新載入本地消息：');
         for (var msg in _messages) {
-          debugPrint('Message ${msg.id}:');
-          debugPrint('- Content: ${msg.content}');
-          debugPrint('- Versions: ${msg.contentVersions?.length ?? 0}');
-          debugPrint('- Current version: ${msg.currentVersion}');
-          debugPrint('- Ratings: ${msg.userRating}');
+          debugPrint('消息 ${msg.id}:');
+          debugPrint('- 內容: ${msg.content}');
+          debugPrint('- 版本數: ${msg.contentVersions?.length ?? 0}');
+          debugPrint('- 當前版本: ${msg.currentVersion}');
+          debugPrint('- 評分數據: ${msg.userRating}');
         }
       }
     } else {
-      // 非試用模式處理
+      // 非試用模式的處理保持不變
       final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-      
-      // 保存到服務器
       final response = await http.post(
         Uri.parse('${_conversationUrl}/conversations/$_currentConversationId/messages'),
         headers: {
@@ -1515,15 +1670,13 @@ Future<void> _handleRegenerationComplete(
 
       if (response.statusCode == 200) {
         final savedMessageData = json.decode(response.body);
-        debugPrint('Server response: ${json.encode(savedMessageData)}');
+        debugPrint('服務器響應: ${json.encode(savedMessageData)}');
         
-        // 更新消息管理器中的評分緩存
         if (savedMessageData['userRating'] != null) {
           Provider.of<MessageRatingManager>(context, listen: false)
             .updateRatingCache(savedMessageData['_id'], savedMessageData['userRating']);
         }
         
-        // 從服務器數據更新消息
         final savedMessage = Message.fromJson(savedMessageData).copyWith(
           content: currentContent,
           isComplete: true,
@@ -1533,11 +1686,10 @@ Future<void> _handleRegenerationComplete(
         );
         
         _messages[index] = savedMessage;
-        debugPrint('Updated message from server response');
+        debugPrint('從服務器響應更新消息');
       } else {
-        // 如果保存失敗，至少更新本地狀態
         _messages[index] = updatedMessage;
-        debugPrint('Server save failed, updated local state only');
+        debugPrint('服務器保存失敗，僅更新本地狀態');
       }
       
       await conversationProvider.saveMessage(_messages[index]);
@@ -1545,7 +1697,7 @@ Future<void> _handleRegenerationComplete(
 
     // 如果是對話中的第一條消息，重新生成標題
     if (index == 0 && _messages.length == 2) {
-      debugPrint('Regenerating title');
+      debugPrint('重新生成標題');
       await Future.delayed(const Duration(milliseconds: 100));
       await _generateTitle(
         _messages[1].content,
@@ -1554,7 +1706,7 @@ Future<void> _handleRegenerationComplete(
     }
 
   } catch (e) {
-    debugPrint('Error handling regeneration completion: $e');
+    debugPrint('處理重新生成完成時發生錯誤: $e');
     // 錯誤處理時也保持消息狀態一致
     _messages[index] = _messages[index].copyWith(
       isComplete: true,
@@ -1639,33 +1791,94 @@ Future<void> createNewConversation() async {
     rethrow;
   }
 }
-
+void _cleanupTrialModeData() {
+  try {
+    // 清理本地消息
+    final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+    conversationProvider.clearAllConversations();
+    
+    // 獲取臨時目錄路徑並清理文件
+    getTemporaryDirectory().then((tempDir) {
+      try {
+        if (tempDir.existsSync()) {
+          final files = tempDir.listSync();
+          
+          // 清理所有臨時文件
+          for (var entity in files) {
+            if (entity is File && (
+              entity.path.toLowerCase().endsWith('.jpg') ||
+              entity.path.toLowerCase().endsWith('.jpeg') ||
+              entity.path.toLowerCase().endsWith('.png'))) {
+              try {
+                entity.deleteSync();
+                debugPrint('已刪除臨時文件: ${entity.path}');
+              } catch (e) {
+                debugPrint('刪除文件失敗: ${entity.path}, 錯誤: $e');
+              }
+            }
+          }
+          debugPrint('臨時文件清理完成');
+        }
+      } catch (e) {
+        debugPrint('清理臨時文件時發生錯誤: $e');
+      }
+    });
+  } catch (e) {
+    debugPrint('清理試用模式數據時發生錯誤: $e');
+  }
+}
 @override
 void dispose() {
-  _imageDataCache.clear();
+  debugPrint('開始清理 ChatProvider...');
   
-  // 試用模式和非試用模式都清理圖片
-  final allImagePaths = _messages
-    .expand((msg) => (msg.images ?? [])
-      .map((img) => img['url'] as String)
-      .where((path) => 
-        path != null && 
-        !path.startsWith('/uploads/') &&
-        !path.startsWith('data:') // 排除 base64 格式的圖片
-      ))
-    .toList();
+  try {
+    // 清理圖片緩存
+    _imageDataCache.clear();
+    
+    if (isTrialMode) {
+      // 在退出時清理本地消息和臨時文件
+      _cleanupTrialModeData();
+    }
+    
+    // 清理圖片文件
+    final imagePaths = _messages
+      .expand((msg) => (msg.images ?? [])
+        .map((img) => img['url'] as String)
+        .where((path) => 
+          path != null && 
+          !path.startsWith('/uploads/') &&
+          !path.startsWith('data:')
+        ))
+      .toList();
 
-  _cleanupTempImages(allImagePaths);
+    if (imagePaths.isNotEmpty) {
+      _cleanupTempImages(imagePaths);
+    }
+    
+    // 關閉 WebSocket 連接
+    if (_channel != null) {
+      _channel!.sink.close();
+      _channel = null;
+      _isConnected = false;
+    }
+    
+    // 取消當前生成
+    if (_currentGeneration != null) {
+      _currentGeneration!.cancel();
+      _currentGeneration = null;
+    }
+    
+    // 清理消息列表
+    _messages.clear();
+    _currentConversationId = null;
+    _isGenerating = false;
+    _isLoadingMessages = false;
+    
+    debugPrint('ChatProvider 清理完成');
+  } catch (e) {
+    debugPrint('清理過程中發生錯誤: $e');
+  }
   
-  _channel?.sink.close();
-  _channel = null;
-  _isConnected = false;
-  
-  _currentGeneration?.cancel();
-  _messages.clear();
-  _currentConversationId = null;
-  _isGenerating = false;
-  _isLoadingMessages = false;
   super.dispose();
 }
 

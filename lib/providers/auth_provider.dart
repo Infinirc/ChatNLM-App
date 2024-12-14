@@ -12,6 +12,7 @@ class AuthProvider with ChangeNotifier {
   String? _userId;
   String? _userName;
   
+  
   bool get isAuthenticated => _isAuthenticated;
   bool get isTrialMode => _isTrialMode;
   String? get token => _token;
@@ -46,23 +47,31 @@ class AuthProvider with ChangeNotifier {
   }
 
   // 修改：保存試用模式狀態
-  Future<void> enterTrialMode() async {
-    try {
-      _isTrialMode = true;
-      _isAuthenticated = false;
-      _token = null;
-      _userId = 'trial_user_${DateTime.now().millisecondsSinceEpoch}';
-      _userName = 'Trial User';
-      
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('isTrialMode', true);
-      
-      debugPrint('Entered and saved trial mode - userId: $_userId');
-      notifyListeners();
-    } catch (e) {
-      debugPrint('Error entering trial mode: $e');
-    }
+Future<void> enterTrialMode() async {
+  try {
+    debugPrint('Entering trial mode...');
+    
+    // 確保先清除之前的認證狀態
+    _isAuthenticated = false;
+    _token = null;
+    
+    // 設置試用模式狀態
+    _isTrialMode = true;
+    _userId = 'trial_user_${DateTime.now().millisecondsSinceEpoch}';
+    _userName = 'Trial User';
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isTrialMode', true);
+    
+    // 確保狀態完全更新後再通知
+    await Future.delayed(const Duration(milliseconds: 100));
+    debugPrint('Entered trial mode - userId: $_userId');
+    notifyListeners();
+  } catch (e) {
+    debugPrint('Error entering trial mode: $e');
   }
+}
+
 
   // 修改：清除試用模式狀態
   Future<void> exitTrialMode() async {
@@ -83,30 +92,49 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  Map<String, dynamic>? _decodeToken(String token) {
-    try {
-      debugPrint('Decoding token: ${token.substring(0, 20)}...');
-      final parts = token.split('.');
-      if (parts.length == 3) {
-        final payload = json.decode(
-          utf8.decode(base64Url.decode(base64Url.normalize(parts[1])))
-        );
-        return payload;
+Map<String, dynamic>? _decodeToken(String token) {
+  try {
+    debugPrint('Decoding token: ${token.substring(0, 20)}...');
+    final parts = token.split('.');
+    if (parts.length == 3) {
+      String payload = parts[1];
+      // 添加缺少的填充
+      while (payload.length % 4 != 0) {
+        payload += '=';
       }
-    } catch (e) {
-      debugPrint('Error decoding token: $e');
+      final normalized = base64Url.normalize(payload);
+      final decoded = utf8.decode(base64Url.decode(normalized));
+      final Map<String, dynamic> data = json.decode(decoded);
+      return data;
     }
-    return null;
+  } catch (e) {
+    debugPrint('Error decoding token: $e');
   }
+  return null;
+}
 
-  void _extractUserInfo(String token) {
-    final payload = _decodeToken(token);
-    if (payload != null) {
-      _userId = payload['userId'] as String?;
-      _userName = payload['name'] as String?;
-      debugPrint('Extracted user info - userId: $_userId, name: $_userName');
+void _extractUserInfo(String token) {
+  final payload = _decodeToken(token);
+  if (payload != null) {
+    _userId = payload['userId']?.toString();  // 確保轉換為字符串
+    _userName = payload['name']?.toString();  // 確保轉換為字符串
+    
+    // 添加詳細的日誌
+    debugPrint('Token payload: ${json.encode(payload)}');
+    debugPrint('Extracted user info - userId: $_userId, name: $_userName');
+    
+    if (_userId == null) {
+      debugPrint('Warning: userId is null in token payload');
     }
+    if (_userName == null) {
+      debugPrint('Warning: name is null in token payload');
+    }
+  } else {
+    debugPrint('Failed to decode token payload');
+    _userId = null;
+    _userName = null;
   }
+}
 
   Future<void> _checkAuth() async {
     try {
@@ -182,31 +210,42 @@ Future<bool> login() async {
   }
 }
 
-  Future<bool> register() async {
-    try {
-      await exitTrialMode();  // 註冊時退出試用模式
+Future<bool> register() async {
+  try {
+    await exitTrialMode();
 
-      debugPrint('Attempting registration...');
-      final token = await _authService.register();
+    debugPrint('Attempting registration...');
+    final token = await _authService.register();
+    
+    if (token != null) {
+      // 保存 token
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', token);
       
-      if (token != null) {
-        _token = token;
-        _extractUserInfo(token);
-        _isAuthenticated = _userId != null;
-        
-        debugPrint('Registration successful - userId: $_userId, name: $_userName');
-        notifyListeners();
-        return true;
-      }
+      // 設置 token 和提取用戶信息
+      _token = token;
+      _extractUserInfo(token);  // 確保提取用戶信息
+      _isAuthenticated = _userId != null;
       
-      debugPrint('Registration failed - no token received');
-      return false;
-    } catch (e) {
-      debugPrint('Registration error: $e');
-      _handleAuthError();
-      return false;
+      // 輸出日誌以便調試
+      debugPrint('Registration successful - token saved');
+      debugPrint('User info after registration - userId: $_userId, name: $_userName');
+      
+      notifyListeners();
+      
+      // 確保更新完成
+      await Future.delayed(const Duration(milliseconds: 100));
+      return true;
     }
+    
+    debugPrint('Registration failed - no token received');
+    return false;
+  } catch (e) {
+    debugPrint('Registration error: $e');
+    _handleAuthError();
+    return false;
   }
+}
 
   // 修改：試用模式下不退出試用
 Future<void> logout() async {
@@ -232,6 +271,8 @@ Future<void> logout() async {
     _handleAuthError();
   }
 }
+
+
 
 Future<void> refreshAuthState() async {
   try {
@@ -274,3 +315,4 @@ Future<void> refreshAuthState() async {
     return null;
   }
 }
+

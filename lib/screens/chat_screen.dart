@@ -845,37 +845,39 @@ return KeepAlive(
       ),
 
       // 試用模式按鈕
-      Consumer<AuthProvider>(
-        builder: (context, authProvider, _) {
-          if (!authProvider.isTrialMode) return const SizedBox.shrink();
-          
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: ElevatedButton(
-              onPressed: () async {
-                await authProvider.logout();
-                if (context.mounted) {
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(
-                      builder: (context) => const LoginScreen(),
-                    ),
-                    (route) => false,
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                foregroundColor: Colors.white,
-                backgroundColor: const Color.fromARGB(255, 107, 107, 107),
-                minimumSize: const Size.fromHeight(40),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+Consumer<AuthProvider>(
+  builder: (context, authProvider, _) {
+    if (!authProvider.isTrialMode) return const SizedBox.shrink();
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: ElevatedButton(
+        onPressed: () async {
+          final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+          await chatProvider.handleLogout();  // 使用新的處理登出方法
+          await authProvider.logout();
+          if (context.mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (context) => const LoginScreen(),
               ),
-              child: const Text('Login'),
-            ),
-          );
+              (route) => false,
+            );
+          }
         },
+        style: ElevatedButton.styleFrom(
+          foregroundColor: Colors.white,
+          backgroundColor: const Color.fromARGB(255, 107, 107, 107),
+          minimumSize: const Size.fromHeight(40),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        child: const Text('Login'),
       ),
+    );
+  },
+),
 
       // 使用者資訊欄
       Container(
@@ -948,18 +950,20 @@ return KeepAlive(
                     ),
                   ),
                 ],
-                onSelected: (value) async {
-                  if (value == 'logout') {
-                    await authProvider.logout();
-                    if (context.mounted) {
-                      Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(
-                          builder: (context) => const LoginScreen(),
-                        ),
-                        (route) => false,
-                      );
-                    }
-                  } else if (value == 'clear') {
+onSelected: (value) async {
+  if (value == 'logout') {
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    await chatProvider.handleLogout();  // 使用新的處理登出方法
+    await authProvider.logout();
+    if (context.mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (context) => const LoginScreen(),
+        ),
+        (route) => false,
+      );
+    }
+  } else if (value == 'clear') {
                     if (context.mounted) {
                       final confirm = await showDialog<bool>(
                         context: context,

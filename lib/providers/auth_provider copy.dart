@@ -12,6 +12,7 @@ class AuthProvider with ChangeNotifier {
   String? _userId;
   String? _userName;
   
+  
   bool get isAuthenticated => _isAuthenticated;
   bool get isTrialMode => _isTrialMode;
   String? get token => _token;
@@ -147,57 +148,77 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> login() async {
-    try {
-      await exitTrialMode();  // 登入時退出試用模式
-
-      debugPrint('Attempting login...');
-      final token = await _authService.login();
-      
-      if (token != null) {
-        _token = token;
-        _extractUserInfo(token);
-        _isAuthenticated = _userId != null;
-        
-        debugPrint('Login successful - userId: $_userId, name: $_userName');
-        notifyListeners();
-        return true;
+Future<bool> login() async {
+  try {
+    debugPrint('Attempting login...');
+    final token = await _authService.login();
+    
+    if (token != null) {
+      // 先清除試用模式的所有狀態
+      if (_isTrialMode) {
+        await exitTrialMode();
       }
       
-      debugPrint('Login failed - no token received');
-      return false;
-    } catch (e) {
-      debugPrint('Login error: $e');
-      _handleAuthError();
-      return false;
-    }
-  }
-
-  Future<bool> register() async {
-    try {
-      await exitTrialMode();  // 註冊時退出試用模式
-
-      debugPrint('Attempting registration...');
-      final token = await _authService.register();
+      _token = token;
+      _extractUserInfo(token);
+      _isAuthenticated = _userId != null;
       
-      if (token != null) {
-        _token = token;
-        _extractUserInfo(token);
-        _isAuthenticated = _userId != null;
-        
-        debugPrint('Registration successful - userId: $_userId, name: $_userName');
-        notifyListeners();
-        return true;
-      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', token);
       
-      debugPrint('Registration failed - no token received');
-      return false;
-    } catch (e) {
-      debugPrint('Registration error: $e');
-      _handleAuthError();
-      return false;
+      debugPrint('Login successful - userId: $_userId, name: $_userName');
+      notifyListeners();
+      
+      // 確保狀態完全更新
+      await Future.delayed(const Duration(milliseconds: 100));
+      return true;
     }
+    
+    debugPrint('Login failed - no token received');
+    return false;
+  } catch (e) {
+    debugPrint('Login error: $e');
+    _handleAuthError();
+    return false;
   }
+}
+
+Future<bool> register() async {
+  try {
+    await exitTrialMode();
+
+    debugPrint('Attempting registration...');
+    final token = await _authService.register();
+    
+    if (token != null) {
+      // 保存 token
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', token);
+      
+      // 設置 token 和提取用戶信息
+      _token = token;
+      _extractUserInfo(token);  // 確保提取用戶信息
+      _isAuthenticated = _userId != null;
+      
+      // 輸出日誌以便調試
+      debugPrint('Registration successful - token saved');
+      debugPrint('User info after registration - userId: $_userId, name: $_userName');
+      
+      notifyListeners();
+      
+      // 確保更新完成
+      await Future.delayed(const Duration(milliseconds: 100));
+      return true;
+    }
+    
+    debugPrint('Registration failed - no token received');
+    return false;
+  } catch (e) {
+    debugPrint('Registration error: $e');
+    _handleAuthError();
+    return false;
+  }
+}
 
   // 修改：試用模式下不退出試用
 Future<void> logout() async {
@@ -224,14 +245,15 @@ Future<void> logout() async {
   }
 }
 
-  Future<void> refreshAuthState() async {
-    if (_isTrialMode) {
-      debugPrint('In trial mode, skipping auth refresh');
-      return;
-    }
-    debugPrint('Refreshing auth state...');
-    await _checkAuth();
+Future<void> refreshAuthState() async {
+  try {
+    await _checkAuth();  // 檢查認證狀態
+    notifyListeners();   // 通知所有監聽器
+    await Future.delayed(const Duration(milliseconds: 50));  // 給予時間更新
+  } catch (e) {
+    debugPrint('Error refreshing auth state: $e');
   }
+}
 
   bool isTokenValid() {
     if (_isTrialMode) return true;

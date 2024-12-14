@@ -735,57 +735,61 @@ return RefreshIndicator(
 
       final group = groups[groupIndex];
       // 其餘列表項渲染代碼保持不變...
-      return KeepAlive(
-        key: ValueKey('group_${group.title}_${groupIndex}_${DateTime.now().microsecondsSinceEpoch}'),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (groupIndex > 0)
-              const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.only(left: 16, top: 16, bottom: 8),
-              child: Text(
-                group.title,
-                style: TextStyle(
-                  color: isDarkMode ? Colors.grey[600] : Colors.grey[500],
-                  fontSize: 13,
-                ),
-              ),
-            ),
-            ...group.conversations.map((conversation) {
-              final isSelected = provider.currentConversation?.id == conversation.id;
-              return Material(
-                key: ValueKey('conversation_${conversation.id}'),
-                color: Colors.transparent,
-                child: ListTile(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                  tileColor: isSelected
-                      ? (isDarkMode ? Colors.grey[900] : Colors.grey[100])
-                      : Colors.transparent,
-                  title: StreamingText(
-                    text: conversation.title,
-                    style: TextStyle(
-                      color: isDarkMode ? Colors.white : Colors.black,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w400,
-                    ),
-                    maxLength: 25,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    streamEnabled: provider.isTitleUpdating && 
-                              provider.currentConversation?.id == conversation.id,
-                  ),
-                  onTap: () => _handleConversationTap(conversation),
-                  trailing: IconButton(
-                    icon: Icon(
-                      Icons.delete_outline,
-                      color: isDarkMode ? Colors.grey[600] : Colors.grey[400],
-                      size: 20,
-                    ),
-                    onPressed: () {
+return KeepAlive(
+  key: ValueKey('group_${group.title}_$groupIndex'),
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      if (groupIndex > 0)
+        const SizedBox(height: 16),
+      Padding(
+        padding: const EdgeInsets.only(left: 16, top: 16, bottom: 8),
+        child: Text(
+          group.title,
+          style: TextStyle(
+            color: isDarkMode ? Colors.grey[600] : Colors.grey[500],
+            fontSize: 13,
+          ),
+        ),
+      ),
+...group.conversations.map((conversation) {
+  final isSelected = provider.currentConversation?.id == conversation.id;
+  // 每個群組中的對話項添加群組索引，確保全局唯一
+  return Material(
+    // 使用組合鍵確保唯一性
+    key: ValueKey('${group.title}_conversation_${conversation.id}'),
+    color: Colors.transparent,
+    child: ListTile(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+      tileColor: isSelected
+          ? (isDarkMode ? Colors.grey[900] : Colors.grey[100])
+          : Colors.transparent,
+      title: StreamingText(
+        key: ValueKey('${group.title}_streaming_${conversation.id}'),
+        text: conversation.title,
+        style: TextStyle(
+          color: isDarkMode ? Colors.white : Colors.black,
+          fontSize: 15,
+          fontWeight: FontWeight.w400,
+        ),
+        maxLength: 25,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        streamEnabled: provider.isTitleUpdating && 
+                    provider.currentConversation?.id == conversation.id,
+      ),
+      onTap: () => _handleConversationTap(conversation),
+      trailing: IconButton(
+        key: ValueKey('${group.title}_delete_${conversation.id}'),
+        icon: Icon(
+          Icons.delete_outline,
+          color: isDarkMode ? Colors.grey[600] : Colors.grey[400],
+          size: 20,
+        ),
+        onPressed: () {
                       showDialog(
                         context: context,
                         builder: (context) => AlertDialog(

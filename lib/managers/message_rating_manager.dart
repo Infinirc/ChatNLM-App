@@ -17,12 +17,9 @@ class MessageRatingManager extends ChangeNotifier {
   }
 
   bool isValidMessageId(String messageId) {
-    if (messageId.length == 24) {
-      return true;
-    }
-    if (messageId.startsWith('trial_')) {
-      return true;
-    }
+    if (messageId.isEmpty) return false;
+    if (messageId.length == 24) return true;
+    if (messageId.startsWith('trial_')) return true;
     if (messageId.startsWith('msg_')) {
       debugPrint('臨時消息ID，需要等待保存到伺服器: $messageId');
       return false;
@@ -31,19 +28,34 @@ class MessageRatingManager extends ChangeNotifier {
   }
 
   String? getRating(String messageId, String userId, int version) {
-    if (userId.isEmpty || messageId.isEmpty) {
-      return null;
-    }
+    if (userId.isEmpty || messageId.isEmpty) return null;
     
     final ratingKey = '${userId}_$version';
-    return _ratingCache[messageId]?[ratingKey];
+    final rating = _ratingCache[messageId]?[ratingKey];
+    debugPrint('獲取評分 - 消息ID: $messageId, 用戶ID: $userId, 版本: $version, 評分: $rating');
+    return rating;
+  }
+
+  Map<String, String>? getAllRatings(String messageId) {
+    return _ratingCache[messageId];
   }
 
   void updateRatingCache(String messageId, Map<String, dynamic> userRating) {
-    _ratingCache[messageId] = Map<String, String>.from(
+    debugPrint('更新評分緩存 - 消息ID: $messageId');
+    debugPrint('原始評分數據: $userRating');
+
+    final newRatings = Map<String, String>.from(
       userRating.map((key, value) => MapEntry(key, value.toString()))
     );
-    debugPrint('更新緩存評分: $messageId -> ${_ratingCache[messageId]}');
+    
+    if (_ratingCache.containsKey(messageId)) {
+      // 合併現有評分，而不是完全替換
+      _ratingCache[messageId]!.addAll(newRatings);
+    } else {
+      _ratingCache[messageId] = newRatings;
+    }
+    
+    debugPrint('更新後的評分緩存: ${_ratingCache[messageId]}');
     notifyListeners();
   }
 
@@ -67,26 +79,37 @@ class MessageRatingManager extends ChangeNotifier {
     }
 
     final ratingKey = '${userId}_$version';
+    debugPrint('處理消息評分:');
+    debugPrint('- 消息ID: $messageId');
+    debugPrint('- 對話ID: $conversationId');
+    debugPrint('- 版本: $version');
+    debugPrint('- 當前評分: $currentRating');
+    debugPrint('- 新評分: $rating');
     
     try {
-      debugPrint('處理消息評分 - 消息ID: $messageId, 對話ID: $conversationId, 版本: $version');
-      
-      // 先更新緩存，提供即時反饋
-      if (_ratingCache[messageId]?[ratingKey] == rating) {
-        _ratingCache[messageId]?.remove(ratingKey);
-        if (_ratingCache[messageId]?.isEmpty == true) {
-          _ratingCache.remove(messageId);
-        }
+      // 更新本地緩存
+      Map<String, String> updatedRatings;
+      if (currentRating != null) {
+        updatedRatings = Map<String, String>.from(currentRating);
       } else {
-        _ratingCache[messageId] = {
-          ...?currentRating,
-          ratingKey: rating
-        };
+        updatedRatings = {};
       }
+
+      // 如果新評分與當前評分相同，則移除評分（切換功能）
+      if (updatedRatings[ratingKey] == rating) {
+        updatedRatings.remove(ratingKey);
+        debugPrint('移除相同評分: $ratingKey');
+      } else {
+        updatedRatings[ratingKey] = rating;
+        debugPrint('添加新評分: $ratingKey = $rating');
+      }
+
+      _ratingCache[messageId] = updatedRatings;
       notifyListeners();
+      debugPrint('緩存更新完成: ${_ratingCache[messageId]}');
 
       if (!isTrialMode) {
-        debugPrint('正在發送評分到伺服器...');
+        debugPrint('發送評分到服務器...');
         final response = await http.post(
           Uri.parse('$baseUrl/conversations/$conversationId/messages/$messageId/rate'),
           headers: {
@@ -96,12 +119,13 @@ class MessageRatingManager extends ChangeNotifier {
           body: json.encode({
             'rating': rating,
             'version': version,
-            'currentRating': _ratingCache[messageId],
+            'currentRating': updatedRatings,
           }),
         );
 
         if (response.statusCode != 200) {
-          // 恢復原始評分狀態
+          debugPrint('服務器響應錯誤: ${response.statusCode}');
+          // 恢復原始評分
           if (currentRating != null) {
             _ratingCache[messageId] = Map<String, String>.from(currentRating);
           } else {
@@ -110,23 +134,12 @@ class MessageRatingManager extends ChangeNotifier {
           notifyListeners();
           throw Exception('評分更新失敗');
         }
+        debugPrint('服務器更新成功');
       }
 
     } catch (e, stack) {
       debugPrint('評分過程發生錯誤: $e');
       debugPrint('錯誤堆疊: $stack');
-      notifyListeners();
-    }
-  }
-
-
-
-
-  void updateMessageId(String oldId, String newId) {
-    final ratings = _ratingCache[oldId];
-    if (ratings != null) {
-      _ratingCache[newId] = ratings;
-      _ratingCache.remove(oldId);
       notifyListeners();
     }
   }

@@ -1,9 +1,8 @@
 # chatnlm
 
-A new Flutter project.
 
 ## Getting Started
-
+```
 lib/
 ├── config/
 │   └── env.dart
@@ -42,3 +41,5 @@ lib/
 │   ├── source_button.dart
 │   └── streaming_text.dart
 └── main.dart
+
+```

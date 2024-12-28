@@ -96,93 +96,140 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     }
   }
 
- Future<void> _handleLogin(BuildContext context) async {
-    if (_isLoading) return;
+Future<void> _handleLogin(BuildContext context) async {
+  if (_isLoading) return;
 
-    setState(() {
-      _isLoading = true;
-    });
+  setState(() {
+    _isLoading = true;
+  });
 
+  try {
+    final authProvider = context.read<AuthProvider>();
+    // 嘗試獲取當前的 ChatProvider（如果存在）並重置
     try {
-      final authProvider = context.read<AuthProvider>();
-      final result = await authProvider.login();
+      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+      await chatProvider.resetGenerationState();
+    } catch (e) {
+      debugPrint('No existing ChatProvider to reset');
+    }
+    
+    final result = await authProvider.login();
+    
+    if (result && mounted) {
+      await authProvider.refreshAuthState();
       
-      if (result && mounted) {
-        await authProvider.refreshAuthState();
-        
-        if (mounted) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(
-              builder: (context) => ChangeNotifierProvider<ConversationProvider>(
-                create: (context) => ConversationProvider(
-                  baseUrl: Env.conversationApiUrl,
-                  userId: authProvider.userId ?? '',
-                )..loadConversations(),
-                child: ChangeNotifierProvider<ChatProvider>(
-                  create: (context) => ChatProvider(
-                    context,
-                    baseUrl: Env.llmApiUrl,
-                    conversationUrl: Env.conversationApiUrl,
-                    isTrialMode: false,
-                  ),
-                  child: Consumer<AuthProvider>(
-                    builder: (context, auth, _) => const ChatScreen(),
-                  ),
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (context) => ChangeNotifierProvider<ConversationProvider>(
+              create: (context) => ConversationProvider(
+                baseUrl: Env.conversationApiUrl,
+                userId: authProvider.userId ?? '',
+              )..loadConversations(),
+              child: ChangeNotifierProvider<ChatProvider>(
+                create: (context) => ChatProvider(
+                  context,
+                  baseUrl: Env.llmApiUrl,
+                  conversationUrl: Env.conversationApiUrl,
+                  isTrialMode: false,
+                ),
+                child: Consumer<AuthProvider>(
+                  builder: (context, auth, _) => const ChatScreen(),
                 ),
               ),
             ),
-            (route) => false,
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Login failed. Please try again.')),
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('Login error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Login failed: $e')),
+          ),
+          (route) => false,
         );
       }
-    } finally {
+    } else {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Login failed. Please try again.')),
+        );
       }
     }
+  } catch (e) {
+    debugPrint('Login error: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Login failed: $e')),
+      );
+    }
+  } finally {
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
-  void _handleTrial(BuildContext context) async {
+}
+void _handleTrial(BuildContext context) async {
+  try {
+    debugPrint('Handling trial mode transition...');
+    
+    // 先重置 ChatProvider（如果存在）
+    try {
+      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+      await chatProvider.resetForTrialMode();
+    } catch (e) {
+      debugPrint('No existing ChatProvider to reset');
+    }
+    
+    // 清理 ConversationProvider（如果存在）
+    try {
+      final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+      conversationProvider.clearLocalMessages();
+    } catch (e) {
+      debugPrint('No existing ConversationProvider to clear');
+    }
+    
     final authProvider = context.read<AuthProvider>();
     await authProvider.enterTrialMode();
     
+    // 等待足夠的時間確保所有狀態都已更新
+    await Future.delayed(const Duration(milliseconds: 200));
+    
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (context) => ChangeNotifierProvider<ConversationProvider>(
-            create: (context) => ConversationProvider(
-              baseUrl: Env.conversationApiUrl,
-              userId: authProvider.userId ?? '',
-            )..loadConversations(),
-            child: ChangeNotifierProvider<ChatProvider>(
-              create: (context) => ChatProvider(
-                context,
-                baseUrl: Env.llmApiUrl,
-                conversationUrl: Env.conversationApiUrl,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+            ChangeNotifierProvider<ConversationProvider>(
+              create: (context) => ConversationProvider(
+                baseUrl: Env.conversationApiUrl,
+                userId: authProvider.userId ?? '',
                 isTrialMode: true,
+              )..loadConversations(),
+              child: ChangeNotifierProvider<ChatProvider>(
+                create: (context) => ChatProvider(
+                  context,
+                  baseUrl: Env.llmApiUrl,
+                  conversationUrl: Env.conversationApiUrl,
+                  isTrialMode: true,
+                ),
+                child: const ChatScreen(),
               ),
-              child: const ChatScreen(),
             ),
-          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 300),
         ),
         (route) => false,
       );
     }
+  } catch (e) {
+    debugPrint('Error transitioning to trial mode: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to enter trial mode. Please try again.')),
+      );
+    }
   }
+}
 
 
 void _navigateToChatScreen(bool isTrialMode) {

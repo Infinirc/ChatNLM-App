@@ -5,6 +5,7 @@ class Conversation {
   final DateTime createdAt;
   final DateTime lastModified;
   final List<Map<String, dynamic>>? localImages;
+  final String? llmModel;
 
   Conversation({
     required this.id,
@@ -12,6 +13,7 @@ class Conversation {
     required this.createdAt,
     required this.lastModified,
     this.localImages,
+    this.llmModel,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -28,6 +30,7 @@ class Conversation {
       createdAt: DateTime.parse(json['createdAt']),
       lastModified: DateTime.parse(json['lastModified']),
       localImages: images,
+      llmModel: json['llmModel']?.toString(),  // 從 JSON 讀取模型資訊
     );
   }
 
@@ -37,6 +40,7 @@ class Conversation {
       'title': title,
       'createdAt': createdAt.toIso8601String(),
       'lastModified': lastModified.toIso8601String(),
+      'llmModel': llmModel, 
     };
 
     if (localImages != null && localImages!.isNotEmpty) {
@@ -52,6 +56,7 @@ class Conversation {
     DateTime? createdAt,
     DateTime? lastModified,
     List<Map<String, dynamic>>? localImages,
+    String? llmModel, 
   }) {
     return Conversation(
       id: id ?? this.id,
@@ -59,6 +64,7 @@ class Conversation {
       createdAt: createdAt ?? this.createdAt,
       lastModified: lastModified ?? this.lastModified,
       localImages: localImages ?? this.localImages,
+      llmModel: llmModel ?? this.llmModel,
     );
   }
 

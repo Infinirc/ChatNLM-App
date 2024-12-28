@@ -177,24 +177,55 @@ Future<void> _cleanupTempImages(List<String>? imagePaths) async {
   }
 }
 
-  Future<void> loadModels() async {
-    try {
-      final response = await http.get(
-        Uri.parse(Env.modelsUrl),
-        headers: {'Accept': 'application/json'},
-      );
+final List<LlmModel> _models = [];
+List<LlmModel> get models => List.unmodifiable(_models);
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        if (data['data'] != null && data['data'].isNotEmpty) {
-          _currentModel = LlmModel.fromJson(data['data'][0]);
-          notifyListeners();
+Future<void> loadModels() async {
+  try {
+    final response = await http.get(
+      Uri.parse(Env.modelsUrl),
+      headers: {'Accept': 'application/json'},
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      if (data['data'] != null) {
+        _models.clear(); // 清空現有模型列表
+        
+        // 將所有模型添加到列表中
+        _models.addAll(
+          (data['data'] as List)
+              .map((json) => LlmModel.fromJson(json))
+              .toList()
+        );
+        
+        // 如果沒有當前選中的模型，或當前模型不在新列表中，
+        // 則選擇第一個可用的模型
+        if (_currentModel == null || 
+            !_models.any((m) => m.id == _currentModel!.id)) {
+          if (_models.isNotEmpty) {
+            _currentModel = _models.first;
+            debugPrint('Selected default model: ${_currentModel!.id}');
+          }
         }
+        
+        notifyListeners();
+        debugPrint('Loaded ${_models.length} models');
       }
-    } catch (e) {
-      debugPrint('Error loading models: $e');
+    } else {
+      debugPrint('Failed to load models: ${response.statusCode}');
     }
+  } catch (e) {
+    debugPrint('Error loading models: $e');
   }
+}
+void setCurrentModel(LlmModel model) {
+  if (_currentModel?.id != model.id) {
+    _currentModel = model;
+    debugPrint('Switched to model: ${model.id}');
+    notifyListeners();
+  }
+}
 
   List<Map<String, dynamic>> _getContextMessages() {
     final List<Message> contextMessages = _messages
@@ -356,9 +387,36 @@ Future<void> clearMessages() async {
     }
   }
 
+Future<void> resetForTrialMode() async {
+  debugPrint('Resetting ChatProvider for trial mode...');
+  
+  try {
+    // 停止所有進行中的操作
+    await resetGenerationState();
+    
+    // 清理消息和狀態
+    await clearMessages();
+    
+    // 重置所有標誌
+    _isGenerating = false;
+    _isLoadingMessages = false;
+    _currentConversationId = null;
+    
+    // 清理圖片緩存
+    _imageDataCache.clear();
+    
+    // 重新初始化其他必要的狀態
+    await loadModels();
+    
+    debugPrint('ChatProvider reset completed for trial mode');
+  } catch (e) {
+    debugPrint('Error resetting ChatProvider: $e');
+  } finally {
+    notifyListeners();
+  }
+}
 
 Future<void> loadConversationMessages(String conversationId) async {
-
   if (_isLoadingMessages) {
     return;
   }
@@ -372,7 +430,24 @@ Future<void> loadConversationMessages(String conversationId) async {
     }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
     debugPrint('Loading messages for user: ${authProvider.userId}');
+
+    // 先找到對話並設置模型
+    final conversation = conversationProvider.conversations.firstWhere(
+      (conv) => conv.id == conversationId,
+    );
+    
+    // 如果對話有指定模型，設置對應的模型
+    if (conversation.llmModel != null) {
+      // 尋找對應的模型並設置
+      final model = _models.firstWhere(
+        (m) => m.id == conversation.llmModel,
+        orElse: () => _models.first,
+      );
+      _currentModel = model;
+      debugPrint('Set current model to: ${model.id}');
+    }
     
     // 保存當前消息的版本信息
     Map<String, int> currentVersions = {};
@@ -626,22 +701,30 @@ Future<Map<String, String>?> _uploadImage(String imagePath) async {
 
 
 Future<void> sendMessage(String content, {List<String>? images, bool useSearch = false}) async {
-    if (_currentModel == null || (content.trim().isEmpty && (images == null || images.isEmpty))) {
-      return;
-    }
+  if (_currentModel == null || (content.trim().isEmpty && (images == null || images.isEmpty))) {
+    return;
+  }
 
-    final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-    
-    if (conversationProvider.currentConversation == null) {
-      final conversation = await conversationProvider.createConversation('新對話');
-      _currentConversationId = conversation.id;
-      await conversationProvider.setCurrentConversation(conversation);
-    } else {
-      _currentConversationId = conversationProvider.currentConversation!.id;
-    }
+  final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+  
+  if (conversationProvider.currentConversation == null) {
+    // 創建新對話時傳入當前選擇的模型
+    final conversation = await conversationProvider.createConversation(
+      '新對話',
+      llmModel: _currentModel!.id,
+    );
+    _currentConversationId = conversation.id;
+    await conversationProvider.setCurrentConversation(conversation);
+  } else if (conversationProvider.currentConversation!.llmModel != _currentModel!.id) {
+    // 如果當前對話的模型與選擇的模型不同，更新對話的模型
+    await conversationProvider.updateConversationModel(
+      conversationProvider.currentConversation!.id,
+      _currentModel!.id,
+    );
+  }
 
-    _isGenerating = true;
-    notifyListeners();
+  _isGenerating = true;
+  notifyListeners();
 
     List<Map<String, String>>? processedImages;
     List<Map<String, dynamic>> messageContent = [];

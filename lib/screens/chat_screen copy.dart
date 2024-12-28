@@ -405,6 +405,7 @@ Expanded(
                 ),
               ),
             ),
+            
             child: Row(
               children: [
                 IconButton(
@@ -466,6 +467,97 @@ Expanded(
             ),
           ),
         
+
+
+
+Consumer<ChatProvider>(
+ builder: (context, chatProvider, child) {
+   return Container(
+     height: 44,
+     padding: const EdgeInsets.symmetric(horizontal: 16),
+     decoration: BoxDecoration(
+       color: isDarkMode ? Colors.black : Colors.white,
+     ),
+     child: Center(
+       child: Container(
+         constraints: const BoxConstraints(maxWidth: 900),
+         child: Row(
+           mainAxisAlignment: MainAxisAlignment.center,
+           children: [
+             DropdownButtonHideUnderline(
+               child: Theme(
+                 data: Theme.of(context).copyWith(
+                   popupMenuTheme: PopupMenuThemeData(
+                     shape: RoundedRectangleBorder(
+                       borderRadius: BorderRadius.circular(8),
+                     ),
+                   ),
+                 ),
+                 child: DropdownButton<String>(
+                   value: chatProvider.currentModel?.id,
+                   icon: Row(
+                     mainAxisSize: MainAxisSize.min,
+                     children: [
+                       const SizedBox(width: 8),
+                       Icon(
+                         Icons.expand_more_rounded,
+                         color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                         size: 20,
+                       ),
+                     ],
+                   ),
+                   elevation: 4,
+                   borderRadius: BorderRadius.circular(8),
+                   dropdownColor: isDarkMode ? const Color(0xFF1C1C1E) : Colors.white,
+                   menuMaxHeight: 300,
+                   style: TextStyle(
+                     color: isDarkMode ? Colors.white : Colors.black,
+                     fontSize: 14,
+                   ),
+                   items: chatProvider.models.map((model) {
+                     return DropdownMenuItem<String>(
+                       value: model.id,
+                       child: Row(
+                         mainAxisSize: MainAxisSize.min,
+                         children: [
+                           Icon(
+                             Icons.auto_awesome,
+                             size: 14,
+                             color: isDarkMode ? Colors.blue[400] : Colors.blue,
+                           ),
+                           const SizedBox(width: 6),
+                           Container(
+                             constraints: const BoxConstraints(maxWidth: 200),
+                             child: Text(
+                               model.id,
+                               overflow: TextOverflow.ellipsis,
+                             ),
+                           ),
+                         ],
+                       ),
+                     );
+                   }).toList(),
+                   onChanged: (String? modelId) {
+                     if (modelId != null) {
+                       final selectedModel = chatProvider.models
+                           .firstWhere((model) => model.id == modelId);
+                       chatProvider.setCurrentModel(selectedModel);
+                     }
+                   },
+                 ),
+               ),
+             ),
+           ],
+         ),
+       ),
+     ),
+   );
+ },
+),
+
+
+
+
         // 聊天內容區域和 ChatInput
         Expanded(
           child: Column(
@@ -845,37 +937,39 @@ return KeepAlive(
       ),
 
       // 試用模式按鈕
-      Consumer<AuthProvider>(
-        builder: (context, authProvider, _) {
-          if (!authProvider.isTrialMode) return const SizedBox.shrink();
-          
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: ElevatedButton(
-              onPressed: () async {
-                await authProvider.logout();
-                if (context.mounted) {
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(
-                      builder: (context) => const LoginScreen(),
-                    ),
-                    (route) => false,
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                foregroundColor: Colors.white,
-                backgroundColor: const Color.fromARGB(255, 107, 107, 107),
-                minimumSize: const Size.fromHeight(40),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+Consumer<AuthProvider>(
+  builder: (context, authProvider, _) {
+    if (!authProvider.isTrialMode) return const SizedBox.shrink();
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: ElevatedButton(
+        onPressed: () async {
+          final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+          await chatProvider.handleLogout();  // 使用新的處理登出方法
+          await authProvider.logout();
+          if (context.mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (context) => const LoginScreen(),
               ),
-              child: const Text('Login'),
-            ),
-          );
+              (route) => false,
+            );
+          }
         },
+        style: ElevatedButton.styleFrom(
+          foregroundColor: Colors.white,
+          backgroundColor: const Color.fromARGB(255, 107, 107, 107),
+          minimumSize: const Size.fromHeight(40),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        child: const Text('Login'),
       ),
+    );
+  },
+),
 
       // 使用者資訊欄
       Container(
@@ -948,18 +1042,20 @@ return KeepAlive(
                     ),
                   ),
                 ],
-                onSelected: (value) async {
-                  if (value == 'logout') {
-                    await authProvider.logout();
-                    if (context.mounted) {
-                      Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(
-                          builder: (context) => const LoginScreen(),
-                        ),
-                        (route) => false,
-                      );
-                    }
-                  } else if (value == 'clear') {
+onSelected: (value) async {
+  if (value == 'logout') {
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    await chatProvider.handleLogout();  // 使用新的處理登出方法
+    await authProvider.logout();
+    if (context.mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (context) => const LoginScreen(),
+        ),
+        (route) => false,
+      );
+    }
+  } else if (value == 'clear') {
                     if (context.mounted) {
                       final confirm = await showDialog<bool>(
                         context: context,

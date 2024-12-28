@@ -9,6 +9,7 @@ class Message {
   final String role;
   final bool isComplete;
   final String id;
+  final String? llmModel;
   final List<SearchResult>? searchResults;
   final List<String>? contentVersions;
   final int currentVersion;
@@ -22,6 +23,7 @@ class Message {
     required this.role,
     this.isComplete = true,
     String? id,
+    this.llmModel,
     this.searchResults,
     this.contentVersions,
     this.currentVersion = 0,
@@ -88,6 +90,7 @@ class Message {
       isUser: json['role'] == 'user',
       timestamp: DateTime.parse(json['timestamp']),
       role: json['role'],
+      llmModel: json['llmModel'],  // 添加這行
       isComplete: json['isComplete'] ?? true,
       id: json['_id'] ?? json['id'],
       images: processedImages,
@@ -102,6 +105,7 @@ class Message {
     return {
       'content': content,
       'role': role,
+      'llmModel': llmModel,
       'timestamp': timestamp.toIso8601String(),
       'isComplete': isComplete,
       'images': images,
@@ -119,6 +123,7 @@ class Message {
     DateTime? timestamp,
     List<Map<String, String>>? images,
     String? role,
+    String? llmModel,
     bool? isComplete,
     List<SearchResult>? searchResults,
     List<String>? contentVersions,
@@ -131,6 +136,7 @@ class Message {
       timestamp: timestamp ?? this.timestamp,
       images: images ?? this.images,
       role: role ?? this.role,
+      llmModel: llmModel ?? this.llmModel,
       isComplete: isComplete ?? this.isComplete,
       id: id,  // 保持原有ID
       searchResults: searchResults ?? this.searchResults,

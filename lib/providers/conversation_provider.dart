@@ -795,57 +795,69 @@ Future<void> loadConversations() async {
   }
 }
 
-  Future<Conversation> createConversation(String title) async {
-    if (userId.isEmpty) {
-      debugPrint('Creating conversation failed: Empty userId');
-      throw Exception('User ID is required');
+Future<Conversation> createConversation(String title, {String? llmModel}) async {
+  if (userId.isEmpty) {
+    debugPrint('Creating conversation failed: Empty userId');
+    throw Exception('User ID is required');
+  }
+
+  try {
+    // 試用模式創建本地臨時對話
+    if (isTrialMode) {
+      final conversationId = 'trial_${DateTime.now().millisecondsSinceEpoch}';
+      final conversation = Conversation(
+        id: conversationId,
+        title: title,
+        createdAt: DateTime.now(),
+        lastModified: DateTime.now(),
+        localImages: [],
+        llmModel: llmModel,
+      );
+      
+      _conversations.insert(0, conversation);
+      _currentConversation = conversation;
+      _filterConversations();
+      
+      _localMessages[conversationId] = [];
+      
+      notifyListeners();
+      debugPrint('Created new trial conversation: ${conversation.id} with model: ${conversation.llmModel}');
+      return conversation;
     }
 
-    try {
-      // 試用模式創建本地臨時對話
-      if (isTrialMode) {
-        final conversationId = 'trial_${DateTime.now().millisecondsSinceEpoch}';
-        final conversation = Conversation(
-          id: conversationId,
-          title: title,
-          createdAt: DateTime.now(),
-          lastModified: DateTime.now(),
-          localImages: [],
-        );
-        
-        _conversations.insert(0, conversation);
-        _currentConversation = conversation;
-        _filterConversations();
-        
-        // 初始化這個對話的本地消息列表
-        _localMessages[conversationId] = [];
-        
-        notifyListeners();
-        debugPrint('Created new trial conversation: ${conversation.id}');
-        return conversation;
-      }
+    final Map<String, dynamic> requestBody = {
+      'title': title,
+      'createdAt': DateTime.now().toIso8601String(),
+      'lastModified': DateTime.now().toIso8601String(),
+    };
 
-    debugPrint('Creating conversation with userId: $userId');
+    if (llmModel != null) {
+      requestBody['llmModel'] = llmModel;
+    }
+
+    debugPrint('Creating conversation with userId: $userId and model: $llmModel');
+    debugPrint('Request body: ${json.encode(requestBody)}');
+
     final response = await http.post(
       Uri.parse('$baseUrl/conversations'),
       headers: {
         'Content-Type': 'application/json',
         'x-user-id': userId,
       },
-      body: json.encode({
-        'title': title,
-        'createdAt': DateTime.now().toIso8601String(),
-        'lastModified': DateTime.now().toIso8601String(),
-      }),
+      body: json.encode(requestBody),
     );
 
     if (response.statusCode == 200) {
-      final conversation = Conversation.fromJson(json.decode(response.body));
+      final data = json.decode(response.body);
+      debugPrint('Server response: ${json.encode(data)}');
+      
+      final conversation = Conversation.fromJson(data);
       _conversations.insert(0, conversation);
       _currentConversation = conversation;
       _filterConversations();
       notifyListeners();
-      debugPrint('Created new conversation: ${conversation.id}');
+      
+      debugPrint('Created new conversation: ${conversation.id} with model: ${conversation.llmModel}');
       return conversation;
     } else {
       final error = 'Failed to create conversation: ${response.statusCode}\nResponse: ${response.body}';
@@ -857,7 +869,75 @@ Future<void> loadConversations() async {
     rethrow;
   }
 }
+Future<void> updateConversationModel(String conversationId, String modelId) async {
+  try {
+    debugPrint('Updating conversation $conversationId model to: $modelId');
+    
+    if (isTrialMode) {
+      final index = _conversations.indexWhere((c) => c.id == conversationId);
+      if (index != -1) {
+        _conversations[index] = _conversations[index].copyWith(
+          llmModel: modelId,
+          lastModified: DateTime.now(),
+        );
+        if (_currentConversation?.id == conversationId) {
+          _currentConversation = _conversations[index];
+        }
+        notifyListeners();
+        debugPrint('Updated trial conversation model: $modelId');
+      }
+      return;
+    }
 
+    // 找到當前對話以獲取標題
+    final conversation = _conversations.firstWhere(
+      (c) => c.id == conversationId,
+      orElse: () => throw Exception('Conversation not found: $conversationId')
+    );
+
+    final requestBody = {
+      'title': conversation.title,  // 加入標題
+      'llmModel': modelId,
+      'lastModified': DateTime.now().toIso8601String(),
+    };
+
+    debugPrint('Sending model update request: ${json.encode(requestBody)}');
+
+    final response = await http.patch(
+      Uri.parse('$baseUrl/conversations/$conversationId'),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': userId,
+      },
+      body: json.encode(requestBody),
+    );
+
+    debugPrint('Server response status: ${response.statusCode}');
+    debugPrint('Server response body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      final updatedData = json.decode(response.body);
+      final updatedConversation = Conversation.fromJson(updatedData);
+      
+      final index = _conversations.indexWhere((c) => c.id == conversationId);
+      if (index != -1) {
+        _conversations[index] = updatedConversation;
+        if (_currentConversation?.id == conversationId) {
+          _currentConversation = updatedConversation;
+        }
+        notifyListeners();
+        debugPrint('Successfully updated conversation model in server: $modelId');
+      }
+    } else {
+      final errorMessage = 'Failed to update conversation model: ${response.statusCode}\nResponse: ${response.body}';
+      debugPrint(errorMessage);
+      throw Exception(errorMessage);
+    }
+  } catch (e) {
+    debugPrint('Error updating conversation model: $e');
+    rethrow;
+  }
+}
 Future<void> updateConversationTitle(String conversationId, String newTitle) async {
   debugPrint('Updating conversation $conversationId title to: $newTitle (Trial Mode: $isTrialMode)');
   try {

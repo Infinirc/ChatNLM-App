@@ -405,6 +405,7 @@ Expanded(
                 ),
               ),
             ),
+            
             child: Row(
               children: [
                 IconButton(
@@ -466,6 +467,97 @@ Expanded(
             ),
           ),
         
+
+
+
+Consumer<ChatProvider>(
+ builder: (context, chatProvider, child) {
+   return Container(
+     height: 44,
+     padding: const EdgeInsets.symmetric(horizontal: 16),
+     decoration: BoxDecoration(
+       color: isDarkMode ? Colors.black : Colors.white,
+     ),
+     child: Center(
+       child: Container(
+         constraints: const BoxConstraints(maxWidth: 900),
+         child: Row(
+           mainAxisAlignment: MainAxisAlignment.center,
+           children: [
+             DropdownButtonHideUnderline(
+               child: Theme(
+                 data: Theme.of(context).copyWith(
+                   popupMenuTheme: PopupMenuThemeData(
+                     shape: RoundedRectangleBorder(
+                       borderRadius: BorderRadius.circular(8),
+                     ),
+                   ),
+                 ),
+                 child: DropdownButton<String>(
+                   value: chatProvider.currentModel?.id,
+                   icon: Row(
+                     mainAxisSize: MainAxisSize.min,
+                     children: [
+                       const SizedBox(width: 8),
+                       Icon(
+                         Icons.expand_more_rounded,
+                         color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                         size: 20,
+                       ),
+                     ],
+                   ),
+                   elevation: 4,
+                   borderRadius: BorderRadius.circular(8),
+                   dropdownColor: isDarkMode ? const Color(0xFF1C1C1E) : Colors.white,
+                   menuMaxHeight: 300,
+                   style: TextStyle(
+                     color: isDarkMode ? Colors.white : Colors.black,
+                     fontSize: 14,
+                   ),
+                   items: chatProvider.models.map((model) {
+                     return DropdownMenuItem<String>(
+                       value: model.id,
+                       child: Row(
+                         mainAxisSize: MainAxisSize.min,
+                         children: [
+                           Icon(
+                             Icons.auto_awesome,
+                             size: 14,
+                             color: isDarkMode ? Colors.blue[400] : Colors.blue,
+                           ),
+                           const SizedBox(width: 6),
+                           Container(
+                             constraints: const BoxConstraints(maxWidth: 200),
+                             child: Text(
+                               model.id,
+                               overflow: TextOverflow.ellipsis,
+                             ),
+                           ),
+                         ],
+                       ),
+                     );
+                   }).toList(),
+                   onChanged: (String? modelId) {
+                     if (modelId != null) {
+                       final selectedModel = chatProvider.models
+                           .firstWhere((model) => model.id == modelId);
+                       chatProvider.setCurrentModel(selectedModel);
+                     }
+                   },
+                 ),
+               ),
+             ),
+           ],
+         ),
+       ),
+     ),
+   );
+ },
+),
+
+
+
+
         // 聊天內容區域和 ChatInput
         Expanded(
           child: Column(

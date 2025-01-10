@@ -95,6 +95,9 @@ class ImageViewer extends StatelessWidget {
     this.isNetworkImage = false,
   });
 
+
+
+
 @override
 Widget build(BuildContext context) {
   Widget imageWidget;
@@ -245,6 +248,12 @@ class ChatMessage extends StatelessWidget {
     super.key,
     required this.message,
   });
+bool _shouldShowImageLoading(Message message) {
+  // 只有在消息包含 images 且其中有 'loading' 狀態的圖片時才顯示載入動畫
+  return message.images != null && 
+         message.images!.isNotEmpty && 
+         message.images!.any((img) => img['url'] == 'loading');
+}
 
   bool _isNetworkImage(String path) {
     return path.startsWith('/uploads/');
@@ -574,9 +583,58 @@ Widget _buildSourceIcon(BuildContext context, SearchResult result, bool isDarkMo
     );
   }
 
+Widget _buildLoadingBox(BuildContext context) {
+  final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+  
+  return Container(
+    width: 200,
+    height: 200,
+    decoration: BoxDecoration(
+      color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Stack(
+      alignment: Alignment.center,
+      children: [
+        TweenAnimationBuilder(
+          duration: const Duration(milliseconds: 1500),
+          tween: Tween(begin: 0.0, end: 1.0),
+          builder: (context, double value, child) {
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                Transform.rotate(
+                  angle: value * 2 * 3.14159,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    backgroundColor: Colors.transparent,
+                    color: isDarkMode ? Colors.grey[700] : Colors.grey[300],
+                  ),
+                ),
+                Opacity(
+                  opacity: value,
+                  child: const Icon(
+                    Icons.image_outlined,
+                    size: 32,
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    ),
+  );
+}
+
 Widget _buildImageWidget(String imagePath, bool isNetworkImage) {
   return Consumer<ChatProvider>(
     builder: (context, chatProvider, child) {
+      if (imagePath == 'loading') {
+        return _buildLoadingBox(context);
+      }
+
       // 檢查緩存
       final cachedData = chatProvider.getImageData(imagePath);
       if (cachedData != null) {
@@ -588,42 +646,35 @@ Widget _buildImageWidget(String imagePath, bool isNetworkImage) {
           gaplessPlayback: true,
           errorBuilder: (context, error, stackTrace) {
             debugPrint('Error loading cached image: $error');
-            return _buildErrorBox();
+            return _buildLoadingBox(context);
           },
         );
       }
 
-      // 處理 base64 格式圖片
-      if (imagePath.startsWith('data:image')) {
-        try {
-          final startIndex = imagePath.indexOf(',') + 1;
-          final bytes = base64Decode(imagePath.substring(startIndex));
-          
-          // 保存到緩存
-          chatProvider.storeImageData(
-            imagePath,
-            ImageData(
-              path: imagePath,
-              bytes: bytes,
-              fileName: 'base64_image.jpg',
-            ),
-          );
-
-          return Image.memory(
-            bytes,
-            width: 200,
-            height: 200,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (context, error, stackTrace) {
-              debugPrint('Error loading base64 image: $error');
-              return _buildErrorBox();
-            },
-          );
-        } catch (e) {
-          debugPrint('Error decoding base64 image: $e');
-          return _buildErrorBox();
-        }
+      // 網絡圖片處理
+      if (isNetworkImage) {
+        return Consumer<AuthProvider>(
+          builder: (context, authProvider, child) {
+            return Image.network(
+              '${Env.conversationApiUrl}$imagePath',
+              width: 200,
+              height: 200,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              headers: {
+                'x-user-id': authProvider.userId ?? '',
+              },
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return _buildLoadingBox(context);
+              },
+              errorBuilder: (context, error, stackTrace) {
+                debugPrint('Error loading network image: $error');
+                return _buildLoadingBox(context);
+              },
+            );
+          },
+        );
       }
 
       // 網絡圖片處理
@@ -862,103 +913,193 @@ if (!message.isUser)
       ),
     ),
   ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-              children: [
-                if (!message.isUser && message.searchResults?.isNotEmpty == true)
-                  _buildSourceButton(context),
-                if (message.images != null && message.images!.isNotEmpty)
-                  Container(
-                    height: 200,
-                    margin: const EdgeInsets.only(bottom: 8.0),
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      // 添加 reverse: true 来反转列表方向
-                      reverse: true,  // 添加这一行
-                      itemCount: message.images!.length,
-                      itemBuilder: (context, index) {
-                        final imagePath = message.images![index]['url']!;
-                        final isNetworkImage = _isNetworkImage(imagePath);
-                        
-                        return Padding(
-                          // 修改 padding，从右边开始
-                          padding: const EdgeInsets.only(left: 8.0),  // 改为 left padding
-                          child: GestureDetector(
-                            onTap: () => _showImageViewer(
-                              context,
-                              imagePath,
-                              isNetworkImage,
-                            ),
-                            child: Hero(
-                              tag: 'image_$imagePath',
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Container(
-                                  width: 200,
-                                  decoration: BoxDecoration(
-                                    color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
-                                    borderRadius: BorderRadius.circular(12),
+Expanded(
+  child: Column(
+    crossAxisAlignment: message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+    children: [
+      if (!message.isUser && message.searchResults?.isNotEmpty == true)
+        _buildSourceButton(context),
+
+      // 使用者圖片在氣泡上方
+      if (message.isUser && message.images != null && message.images!.isNotEmpty)
+        Container(
+          height: 200,
+          margin: const EdgeInsets.only(bottom: 8.0),  // 添加底部間距
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            reverse: message.isUser,  // 使用者圖片從右邊開始
+            itemCount: message.images!.length,
+            itemBuilder: (context, index) {
+              final imagePath = message.images![index]['url']!;
+              final isNetworkImage = _isNetworkImage(imagePath);
+              
+              if (imagePath == 'loading' && !_shouldShowImageLoading(message)) {
+                return const SizedBox.shrink();
+              }
+
+              return Container(
+                alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    right: message.isUser && index != message.images!.length - 1 ? 8.0 : 0.0,
+                    left: !message.isUser && index != message.images!.length - 1 ? 8.0 : 0.0,
+                  ),
+                  child: GestureDetector(
+                    onTap: () => _showImageViewer(context, imagePath, isNetworkImage),
+                    child: Hero(
+                      tag: 'image_$imagePath',
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: 200,
+                          decoration: BoxDecoration(
+                            color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              if (_shouldShowImageLoading(message))
+                                Container(
+                                  color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
+                                  child: const Center(
+                                    child: Icon(
+                                      Icons.image,
+                                      size: 48,
+                                      color: Colors.grey,
+                                    ),
                                   ),
-                                  child: _buildImageWidget(imagePath, isNetworkImage),
                                 ),
+                              imagePath != 'loading'
+                                  ? _buildImageWidget(imagePath, isNetworkImage)
+                                  : _buildLoadingBox(context),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+
+      // 聊天氣泡
+      Container(
+        padding: const EdgeInsets.all(12.0),
+        decoration: BoxDecoration(
+          color: message.isUser
+              ? (isDarkMode
+                  ? const Color.fromARGB(255, 80, 80, 80)
+                  : const Color.fromARGB(255, 80, 80, 80))
+              : (isDarkMode
+                  ? const Color(0xFF1C1C1E)
+                  : Colors.white),
+          borderRadius: BorderRadius.circular(20.0),
+          border: (!message.isUser && !isDarkMode)
+              ? Border.all(
+                  color: Colors.grey.withOpacity(0.2),
+                  width: 1,
+                )
+              : null,
+          boxShadow: !isDarkMode
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 5,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
+              : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            MarkdownContent(
+              content: message.content,
+              textColor: message.isUser || isDarkMode
+                  ? Colors.white
+                  : const Color(0xFF2C2C2E),
+            ),
+            if (!message.isComplete) ...[
+              const SizedBox(height: 8),
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+
+
+if (!message.isUser && message.images != null && message.images!.isNotEmpty)
+  Container(
+    height: 200,
+    margin: const EdgeInsets.only(top: 8.0),
+    child: ListView.builder(
+      scrollDirection: Axis.horizontal,
+      reverse: false,  // AI 的圖片從左邊開始
+      itemCount: message.images!.length,
+      itemBuilder: (context, index) {
+        final imagePath = message.images![index]['url']!;
+        final isNetworkImage = _isNetworkImage(imagePath);
+        
+        if (imagePath == 'loading' && !_shouldShowImageLoading(message)) {
+          return const SizedBox.shrink();
+        }
+
+        return Container(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: EdgeInsets.only(
+              right: index != message.images!.length - 1 ? 8.0 : 0.0,
+            ),
+            child: GestureDetector(
+              onTap: () => _showImageViewer(context, imagePath, isNetworkImage),
+              child: Hero(
+                tag: 'image_$imagePath',
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 200,
+                    decoration: BoxDecoration(
+                      color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (_shouldShowImageLoading(message))
+                          Container(
+                            color: isDarkMode ? Colors.grey[850] : Colors.grey[100],
+                            child: const Center(
+                              child: Icon(
+                                Icons.image,
+                                size: 48,
+                                color: Colors.grey,
                               ),
                             ),
                           ),
-                        );
-                      },
+                        imagePath != 'loading'
+                            ? _buildImageWidget(imagePath, isNetworkImage)
+                            : _buildLoadingBox(context),
+                      ],
                     ),
                   ),
-                Container(
-                  padding: const EdgeInsets.all(12.0),
-                  decoration: BoxDecoration(
-                    color: message.isUser
-                        ? (isDarkMode
-                            ? const Color.fromARGB(255, 80, 80, 80) // 深色模式用戶消息背景
-                            : const Color.fromARGB(255, 80, 80, 80)) // 淺色模式用戶消息背景
-                        : (isDarkMode
-                            ? const Color(0xFF1C1C1E) // 深色模式 AI 消息背景
-                            : Colors.white), // 淺色模式 AI 消息背景
-                    borderRadius: BorderRadius.circular(20.0),
-                    border: (!message.isUser && !isDarkMode)
-                        ? Border.all(
-                            color: Colors.grey.withOpacity(0.2),
-                            width: 1,
-                          )
-                        : null,
-                    boxShadow: !isDarkMode
-                        ? [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 5,
-                              offset: const Offset(0, 2),
-                            ),
-                          ]
-                        : null,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      MarkdownContent(
-                        content: message.content,
-                        textColor: message.isUser || isDarkMode
-                            ? Colors.white
-                            : const Color(0xFF2C2C2E),  // 黑色文字用於淺色模式下的 AI 消息
-                      ),
-                      if (!message.isComplete) ...[
-                        const SizedBox(height: 8),
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
                 ),
+              ),
+            ),
+          ),
+        );
+      },
+    ),
+  ),
 if (!message.isUser) ...[
   const SizedBox(height: 4),
   Row(

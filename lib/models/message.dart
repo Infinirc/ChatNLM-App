@@ -14,6 +14,8 @@ class Message {
   final List<String>? contentVersions;
   final int currentVersion;
   final Map<String, dynamic>? userRating;
+    final bool isGeneratingImage;  // 新增
+  final String? imagePrompt;     // 新增
 
   Message({
     required this.content,
@@ -28,6 +30,8 @@ class Message {
     this.contentVersions,
     this.currentVersion = 0,
     this.userRating,
+    this.isGeneratingImage = false,  // 新增
+    this.imagePrompt,  
   }) : id = _generateId(id);
 
   // 生成合适的ID
@@ -98,6 +102,8 @@ class Message {
       contentVersions: contentVersions,
       currentVersion: json['currentVersion'] ?? 0,
       userRating: userRating,
+            isGeneratingImage: json['isGeneratingImage'] ?? false,  // 新增
+      imagePrompt: json['imagePrompt'] as String?,  
     );
   }
 
@@ -114,6 +120,8 @@ class Message {
       'currentVersion': currentVersion,
       'userRating': userRating,
       '_id': id,  // 使用 _id 以匹配服务器格式
+            'isGeneratingImage': isGeneratingImage,  // 新增
+      'imagePrompt': imagePrompt,  
     };
   }
 
@@ -122,6 +130,7 @@ class Message {
     bool? isUser,
     DateTime? timestamp,
     List<Map<String, String>>? images,
+    
     String? role,
     String? llmModel,
     bool? isComplete,
@@ -129,6 +138,8 @@ class Message {
     List<String>? contentVersions,
     int? currentVersion,
     Map<String, dynamic>? userRating,
+        bool? isGeneratingImage,  // 新增
+    String? imagePrompt,      // 新增
   }) {
     return Message(
       content: content ?? this.content,
@@ -143,6 +154,8 @@ class Message {
       contentVersions: contentVersions ?? this.contentVersions,
       currentVersion: currentVersion ?? this.currentVersion,
       userRating: userRating ?? this.userRating,
+            isGeneratingImage: isGeneratingImage ?? this.isGeneratingImage,  // 新增
+      imagePrompt: imagePrompt ?? this.imagePrompt,   
     );
   }
 

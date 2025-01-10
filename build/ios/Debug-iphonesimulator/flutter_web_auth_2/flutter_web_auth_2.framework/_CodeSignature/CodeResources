@@ -10,7 +10,7 @@
 		</data>
 		<key>Headers/flutter_web_auth_2-Swift.h</key>
 		<data>
-		AbE0KpocnxaRAwJLr+xhe0R3ILs=
+		sSANKiIgFuUsYYdoKSmT8vAEDMY=
 		</data>
 		<key>Headers/flutter_web_auth_2-umbrella.h</key>
 		<data>
@@ -18,15 +18,15 @@
 		</data>
 		<key>Info.plist</key>
 		<data>
-		0sDDopxCqtWFMPpcu7Hj+Y4Z5Qw=
+		poo8DmnKc2MBMzsJJS8IljRyXco=
 		</data>
 		<key>Modules/flutter_web_auth_2.swiftmodule/Project/arm64-apple-ios-simulator.swiftsourceinfo</key>
 		<data>
-		R+SDFxPi7k2Jh4SCcw5xkROTadk=
+		cAJK09o90ij/gerYD0bH6RfOQgI=
 		</data>
 		<key>Modules/flutter_web_auth_2.swiftmodule/Project/x86_64-apple-ios-simulator.swiftsourceinfo</key>
 		<data>
-		ii/IfkuR2/gJa5xj/I5URHlQCe8=
+		bSIcMCRrWFiRoAQZ+NZPheP3FMI=
 		</data>
 		<key>Modules/flutter_web_auth_2.swiftmodule/arm64-apple-ios-simulator.abi.json</key>
 		<data>
@@ -34,11 +34,11 @@
 		</data>
 		<key>Modules/flutter_web_auth_2.swiftmodule/arm64-apple-ios-simulator.swiftdoc</key>
 		<data>
-		PAqTUOGc5NieTliBLzskduzl7R4=
+		KAASQdS9ddLG4hChelCbMIlvNZM=
 		</data>
 		<key>Modules/flutter_web_auth_2.swiftmodule/arm64-apple-ios-simulator.swiftmodule</key>
 		<data>
-		7pKXSGBFHzR4rZibLtch2VX3r1Q=
+		pyMRlR2s72ZmI1uOpOSNTmWiVwk=
 		</data>
 		<key>Modules/flutter_web_auth_2.swiftmodule/x86_64-apple-ios-simulator.abi.json</key>
 		<data>
@@ -46,11 +46,11 @@
 		</data>
 		<key>Modules/flutter_web_auth_2.swiftmodule/x86_64-apple-ios-simulator.swiftdoc</key>
 		<data>
-		ZDZ0UEwsfjPZvlbImYMlT8NSHmc=
+		57ZydhVMyjvXCBpeehn7aqEDLJ8=
 		</data>
 		<key>Modules/flutter_web_auth_2.swiftmodule/x86_64-apple-ios-simulator.swiftmodule</key>
 		<data>
-		2naAadBqVzD+pFYY3JbZn5Oz7fk=
+		LNk5+dJ9gNL/0RC54uUnw7/dVJM=
 		</data>
 		<key>Modules/module.modulemap</key>
 		<data>
@@ -70,7 +70,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			6m82tguc8JkXLbsp+/Y07vFNMbwnAtedNHXr9UJTLBs=
+			dijWtMNqiod9uYcVz/V1n3a24cUmvm3pZI01uNsaDnY=
 			</data>
 		</dict>
 		<key>Headers/flutter_web_auth_2-umbrella.h</key>
@@ -84,14 +84,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			TJA6eyBZQLxrTtKnqYipyao0b/Bpz6pQOCwMfUHT5UA=
+			DI3B/EZVIPIm7eANXAK9PxLU+XzY1sCoAMoqjrH7jBo=
 			</data>
 		</dict>
 		<key>Modules/flutter_web_auth_2.swiftmodule/Project/x86_64-apple-ios-simulator.swiftsourceinfo</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			HjyWHEPXK903+rtagpmcBzfJR9RPztXP47jf3pf1DVI=
+			/zCHjMe21s9C6xD3HYH9vYGifY5vcFu0/F25tyYBdYg=
 			</data>
 		</dict>
 		<key>Modules/flutter_web_auth_2.swiftmodule/arm64-apple-ios-simulator.abi.json</key>
@@ -105,14 +105,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			aySBdD1jLl5VpHHihzWrxQ5BH8SnSEMCS7pgAs2Qaiw=
+			RwpSk4EvrBC2SSYtv7uVnRctQc/PeSHNSw/3twgpFFk=
 			</data>
 		</dict>
 		<key>Modules/flutter_web_auth_2.swiftmodule/arm64-apple-ios-simulator.swiftmodule</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			ZrPKrZfos84UzK3tcox/sqxADUCWMLi92oBUtu475fQ=
+			KvTsQbR/Af8H5m10ggIOjg4A/2HShLfDwHMcdC2gFO0=
 			</data>
 		</dict>
 		<key>Modules/flutter_web_auth_2.swiftmodule/x86_64-apple-ios-simulator.abi.json</key>
@@ -126,14 +126,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			uVFC8AvtvaJ+sWh5X5kGHMrD2PT7Hzwx38wDLeEwE2c=
+			Gu7nmsha9QZH3p6r0oe4bG6PxdNSRguXcWEvuKf05DE=
 			</data>
 		</dict>
 		<key>Modules/flutter_web_auth_2.swiftmodule/x86_64-apple-ios-simulator.swiftmodule</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			onNdaLqpj3fyS1D2cV1+c7QLSCVJfuYer1kvhoItkww=
+			jiUdp++0ReBduvBGHBTErgNnr9SutoSr7AGI0Z2Z91Q=
 			</data>
 		</dict>
 		<key>Modules/module.modulemap</key>

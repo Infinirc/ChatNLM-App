@@ -417,7 +417,6 @@ Future<void> resetForTrialMode() async {
 }
 
 Future<void> loadConversationMessages(String conversationId) async {
-
   if (_isLoadingMessages) {
     return;
   }
@@ -431,7 +430,24 @@ Future<void> loadConversationMessages(String conversationId) async {
     }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
     debugPrint('Loading messages for user: ${authProvider.userId}');
+
+    // 先找到對話並設置模型
+    final conversation = conversationProvider.conversations.firstWhere(
+      (conv) => conv.id == conversationId,
+    );
+    
+    // 如果對話有指定模型，設置對應的模型
+    if (conversation.llmModel != null) {
+      // 尋找對應的模型並設置
+      final model = _models.firstWhere(
+        (m) => m.id == conversation.llmModel,
+        orElse: () => _models.first,
+      );
+      _currentModel = model;
+      debugPrint('Set current model to: ${model.id}');
+    }
     
     // 保存當前消息的版本信息
     Map<String, int> currentVersions = {};
@@ -685,22 +701,44 @@ Future<Map<String, String>?> _uploadImage(String imagePath) async {
 
 
 Future<void> sendMessage(String content, {List<String>? images, bool useSearch = false}) async {
-    if (_currentModel == null || (content.trim().isEmpty && (images == null || images.isEmpty))) {
-      return;
-    }
+  if (_currentModel == null || (content.trim().isEmpty && (images == null || images.isEmpty))) {
+    return;
+  }
 
-    final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+  final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+  
+if (conversationProvider.currentConversation == null) {
+  debugPrint('創建新對話，使用模型: ${_currentModel?.id}');
+  
+  // 創建新對話並設置模型
+  final conversation = await conversationProvider.createConversation(
+    '新對話',
+    llmModel: _currentModel?.id
+  );
+  
+  // 設置當前對話 ID
+  _currentConversationId = conversation.id;
+  await conversationProvider.setCurrentConversation(conversation);
+  
+  debugPrint('新對話創建完成，ID: $_currentConversationId，模型: ${conversation.llmModel}');
+} else {
+  // 確保當前對話 ID 正確設置
+  _currentConversationId = conversationProvider.currentConversation!.id;
+  
+  // 檢查並更新模型（如果需要）
+  if (_currentModel != null && 
+      conversationProvider.currentConversation!.llmModel != _currentModel!.id) {
+    debugPrint('更新對話模型從 ${conversationProvider.currentConversation!.llmModel} 到 ${_currentModel!.id}');
     
-    if (conversationProvider.currentConversation == null) {
-      final conversation = await conversationProvider.createConversation('新對話');
-      _currentConversationId = conversation.id;
-      await conversationProvider.setCurrentConversation(conversation);
-    } else {
-      _currentConversationId = conversationProvider.currentConversation!.id;
-    }
+    await conversationProvider.updateConversationModel(
+      conversationProvider.currentConversation!.id,
+      _currentModel!.id
+    );
+  }
+}
 
-    _isGenerating = true;
-    notifyListeners();
+  _isGenerating = true;
+  notifyListeners();
 
     List<Map<String, String>>? processedImages;
     List<Map<String, dynamic>> messageContent = [];

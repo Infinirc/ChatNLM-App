@@ -18,7 +18,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
 import '../managers/message_rating_manager.dart';
-
+import 'package:async/async.dart' show unawaited;
 
 class ImageData {
   final String path;
@@ -626,6 +626,370 @@ Future<void> loadConversationMessages(String conversationId) async {
     notifyListeners();
   }
 }
+Future<void> sendMessage(String content, {List<String>? images, bool useSearch = false}) async {
+  if (_currentModel == null || (content.trim().isEmpty && (images == null || images.isEmpty))) {
+    return;
+  }
+
+  final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
+  
+  if (conversationProvider.currentConversation == null) {
+    debugPrint('創建新對話，使用模型: ${_currentModel?.id}');
+    final conversation = await conversationProvider.createConversation(
+      '新對話',
+      llmModel: _currentModel?.id
+    );
+    _currentConversationId = conversation.id;
+    await conversationProvider.setCurrentConversation(conversation);
+    debugPrint('新對話創建完成，ID: $_currentConversationId，模型: ${conversation.llmModel}');
+  } else {
+    _currentConversationId = conversationProvider.currentConversation!.id;
+    if (_currentModel != null && 
+        conversationProvider.currentConversation!.llmModel != _currentModel!.id) {
+      await conversationProvider.updateConversationModel(
+        conversationProvider.currentConversation!.id,
+        _currentModel!.id
+      );
+    }
+  }
+
+  _isGenerating = true;
+  notifyListeners();
+
+  List<Map<String, String>>? processedImages;
+  List<Map<String, dynamic>> messageContent = [];
+  
+  if (images != null && images.isNotEmpty) {
+    processedImages = [];
+    for (final imagePath in images) {
+      try {
+        if (!isTrialMode) {
+          debugPrint('Processing image for upload: $imagePath');
+          int retries = 3;
+          Map<String, String>? uploadResult;
+          while (retries > 0 && uploadResult == null) {
+            uploadResult = await _uploadImage(imagePath);
+            if (uploadResult == null) {
+              retries--;
+              if (retries > 0) {
+                await Future.delayed(Duration(seconds: 1));
+              }
+            }
+          }
+
+          if (uploadResult != null) {
+            processedImages.add(uploadResult);
+            debugPrint('Image processed successfully');
+            if (kIsWeb) {
+              messageContent.add({
+                'type': 'image_url',
+                'image_url': {'url': imagePath}
+              });
+            } else {
+              final bytes = await File(imagePath).readAsBytes();
+              final base64Image = base64Encode(bytes);
+              messageContent.add({
+                'type': 'image_url',
+                'image_url': {'url': 'data:image/jpeg;base64,$base64Image'}
+              });
+            }
+          } else {
+            debugPrint('Failed to upload image after all retries');
+          }
+        } else {
+          if (kIsWeb) {
+            processedImages.add({'url': imagePath});
+            messageContent.add({
+              'type': 'image_url',
+              'image_url': {'url': imagePath}
+            });
+          } else {
+            final bytes = await File(imagePath).readAsBytes();
+            final base64Image = base64Encode(bytes);
+            final base64Url = 'data:image/jpeg;base64,$base64Image';
+            storeImageData(imagePath, ImageData(
+              path: imagePath,
+              bytes: bytes,
+              fileName: imagePath.split('/').last,
+            ));
+            processedImages.add({'url': base64Url});
+            messageContent.add({
+              'type': 'image_url',
+              'image_url': {'url': base64Url}
+            });
+          }
+          debugPrint('Trial mode: Image processed locally');
+        }
+      } catch (e) {
+        debugPrint('Error processing image: $e');
+        if (isTrialMode) {
+          processedImages.add({'url': imagePath});
+          messageContent.add({
+            'type': 'image_url',
+            'image_url': {'url': imagePath}
+          });
+        }
+      }
+    }
+  }
+
+  final trimmedContent = content.trim();
+if (trimmedContent.isNotEmpty) {
+  // 启动独立的图片检查流程，不等待其完成
+  unawaited(_checkAndGenerateImage(trimmedContent));
+}
+
+  final userMessage = Message(
+    id: isTrialMode ? 'trial_${DateTime.now().millisecondsSinceEpoch}' : null,
+    content: trimmedContent,
+    isUser: true,
+    timestamp: DateTime.now(),
+    role: 'user',
+    images: processedImages,
+  );
+
+  _messages.insert(0, userMessage);
+  notifyListeners();
+
+  if (isTrialMode) {
+    await conversationProvider.saveLocalMessage(_currentConversationId!, userMessage);
+  } else {
+    await conversationProvider.saveMessage(userMessage);
+  }
+
+  // 創建 AI 回應消息時，初始不包含圖片陣列
+  final aiMessage = Message(
+    id: isTrialMode ? 'trial_${DateTime.now().millisecondsSinceEpoch}' : null,
+    content: useSearch ? '🔍 正在分析問題...' : '',
+    isUser: false,
+    timestamp: DateTime.now(),
+    isComplete: false,
+    role: 'assistant',
+  );
+  _messages.insert(0, aiMessage);
+  notifyListeners();
+
+  // 只有在檢測到需要生成圖片時才添加圖片陣列
+  if (trimmedContent.isNotEmpty) {
+    messageContent.add({'type': 'text', 'text': trimmedContent});
+  }
+
+  try {
+    List<SearchResult>? searchResults;
+    if (useSearch) {
+      _messages[0] = _messages[0].copyWith(
+        content: '🔍 正在生成搜尋關鍵字...',
+      );
+      notifyListeners();
+
+      final searchKeywords = await _generateSearchKeywords(trimmedContent);
+      _messages[0] = _messages[0].copyWith(
+        content: '🔍 搜尋關鍵字：$searchKeywords\n正在搜尋相關資訊...',
+      );
+      notifyListeners();
+
+      searchResults = await _performSearch(searchKeywords);
+      _messages[0] = _messages[0].copyWith(
+        content: '📚 找到 ${searchResults.length} 個相關結果\n正在整理資訊...',
+      );
+      notifyListeners();
+    }
+
+    String systemPrompt = '';
+    if (searchResults != null && searchResults.isNotEmpty) {
+      systemPrompt = '我找到了一些相關資訊：\n\n';
+      for (var result in searchResults) {
+        if (result.title.isNotEmpty && result.content.isNotEmpty) {
+          systemPrompt += '來源: ${result.title}\n';
+          systemPrompt += '內容: ${result.content}\n\n';
+        }
+      }
+      
+      searchResults = searchResults.where((result) => 
+        result.title.isNotEmpty && 
+        result.content.isNotEmpty
+      ).toList();
+      
+      systemPrompt += '根據以上資訊，參考多一點資訊，來回答你的問題，且要是最新資訊，詳細一點可以列點：\n';
+
+      _messages[0] = _messages[0].copyWith(
+        content: '🤔 正在根據搜尋結果生成回答...',
+        searchResults: searchResults,
+      );
+      notifyListeners();
+    }
+
+    await _connectWebSocket();
+    
+    if (!_isConnected) {
+      throw Exception('無法建立 WebSocket 連接');
+    }
+
+    final requestBody = {
+      'model': _currentModel!.id,
+      'messages': [
+        if (systemPrompt.isNotEmpty)
+          {
+            'role': 'system',
+            'content': systemPrompt,
+          },
+        ...(_getContextMessages()),
+        {
+          'role': 'user',
+          'content': messageContent,
+        }
+      ],
+      'max_tokens': 1000,
+      'stream': true,
+    };
+
+    _channel!.sink.add(jsonEncode(requestBody));
+    String currentContent = '';
+
+    _currentGeneration = _channel!.stream.listen(
+      (data) {
+        if (data is String) {
+          if (data.startsWith('data: [DONE]')) {
+            _handleMessageComplete(currentContent, searchResults);
+            return;
+          }
+          
+          if (data.startsWith('data: ')) {
+            String jsonData = data.substring(6);
+            try {
+              final parsed = jsonDecode(jsonData);
+              final content = parsed['choices'][0]['delta']['content'] ?? '';
+              currentContent += content;
+              
+              _messages[0] = _messages[0].copyWith(
+                content: currentContent,
+                searchResults: searchResults,
+              );
+              notifyListeners();
+            } catch (e) {
+              debugPrint('Error parsing WebSocket data: $e');
+            }
+          }
+        }
+      },
+      onDone: () {
+        debugPrint('WebSocket connection closed');
+        _isGenerating = false;
+        _currentGeneration = null;
+        _channel?.sink.close();
+        _channel = null;
+        _isConnected = false;
+        notifyListeners();
+      },
+      onError: (error) {
+        debugPrint('WebSocket error: $error');
+        _messages[0] = _messages[0].copyWith(
+          content: '❌ WebSocket 連接錯誤',
+          isComplete: true,
+        );
+        _isGenerating = false;
+        notifyListeners();
+      },
+      cancelOnError: true,
+    );
+  } catch (e) {
+    debugPrint('Error in send message: $e');
+    _messages[0] = _messages[0].copyWith(
+      content: '❌ 處理訊息時發生錯誤',
+      isComplete: true,
+    );
+    _isGenerating = false;
+    notifyListeners();
+  }
+}
+Future<void> _checkAndGenerateImage(String content) async {
+  try {
+    final response = await http.post(
+      Uri.parse('${Env.imageGenerationUrl}'),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': Provider.of<AuthProvider>(context, listen: false).userId ?? '',
+      },
+      body: json.encode({'message': content}),
+    );
+
+    if (response.statusCode == 200) {
+      final result = json.decode(response.body);
+      if (result['needs_image'] == true) {
+        // 只有在確認需要生成圖片時才添加 loading 狀態
+        final assistantIndex = _messages.indexWhere((m) => !m.isUser);
+        if (assistantIndex != -1) {
+          _messages[assistantIndex] = _messages[assistantIndex].copyWith(
+            images: [{'url': 'loading', 'filename': 'generating.png'}],
+          );
+          notifyListeners();
+          
+          // 開始生成圖片
+          await _generateImage(content);
+        }
+      }
+    }
+  } catch (e) {
+    debugPrint('Error checking image generation: $e');
+  }
+}
+
+// 修改生成图片方法，移除重复的loading状态
+Future<void> _generateImage(String content) async {
+  // 找到最新的AI回复消息
+  final assistantIndex = _messages.indexWhere((m) => !m.isUser);
+  if (assistantIndex == -1) return;
+
+  try {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    
+    final imageGenResponse = await http.post(
+      Uri.parse('${Env.imageGenerationUrl}'),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': authProvider.userId ?? '',
+      },
+      body: json.encode({'message': content})
+    );
+
+    if (imageGenResponse.statusCode == 200) {
+      final imageGenResult = json.decode(imageGenResponse.body);
+      
+      if (imageGenResult['images'] != null && imageGenResult['images'].isNotEmpty) {
+        final List<Map<String, String>> processedImages = 
+          (imageGenResult['images'] as List).map((img) => {
+            'url': img['url'] as String,
+            'filename': img['filename'] as String,
+          }).toList();
+
+        // 更新为实际生成的图片
+        _messages[assistantIndex] = _messages[assistantIndex].copyWith(
+          images: processedImages,
+          isComplete: true,
+        );
+        notifyListeners();
+
+        // 保存更新后的消息
+        if (isTrialMode) {
+          await context.read<ConversationProvider>().saveLocalMessage(
+            _currentConversationId!, 
+            _messages[assistantIndex]
+          );
+        } else {
+          await context.read<ConversationProvider>().saveMessage(_messages[assistantIndex]);
+        }
+      }
+    }
+  } catch (e) {
+    debugPrint('Error generating image: $e');
+    // 发生错误时移除loading状态
+    _messages[assistantIndex] = _messages[assistantIndex].copyWith(
+      images: [],
+    );
+    notifyListeners();
+  }
+}
+
 Future<Map<String, String>?> _uploadImage(String imagePath) async {
   try {
     debugPrint('Uploading image: $imagePath');
@@ -663,11 +1027,6 @@ Future<Map<String, String>?> _uploadImage(String imagePath) async {
           contentType: MediaType.parse(mimeType),
         )
       );
-
-      debugPrint('Uploading web image:');
-      debugPrint('MIME type: $mimeType');
-      debugPrint('Extension: $extension');
-      debugPrint('Data size: ${bytes.length} bytes');
     } else {
       request.files.add(
         await http.MultipartFile.fromPath(
@@ -683,304 +1042,16 @@ Future<Map<String, String>?> _uploadImage(String imagePath) async {
     
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      debugPrint('Upload success: ${data['url']}');
       return {
-        'url': data['url'],
-        'filename': data['filename']
+        'url': data['url'] as String,
+        'filename': data['filename'] as String
       };
-    } else {
-      debugPrint('Upload failed with status: ${response.statusCode}');
-      debugPrint('Response body: ${response.body}');
     }
     return null;
   } catch (e) {
     debugPrint('Error uploading image: $e');
     return null;
   }
-}
-
-
-Future<void> sendMessage(String content, {List<String>? images, bool useSearch = false}) async {
-  if (_currentModel == null || (content.trim().isEmpty && (images == null || images.isEmpty))) {
-    return;
-  }
-
-  final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-  
-  if (conversationProvider.currentConversation == null) {
-    // 創建新對話時傳入當前選擇的模型
-    final conversation = await conversationProvider.createConversation(
-      '新對話',
-      llmModel: _currentModel!.id,
-    );
-    _currentConversationId = conversation.id;
-    await conversationProvider.setCurrentConversation(conversation);
-  } else if (conversationProvider.currentConversation!.llmModel != _currentModel!.id) {
-    // 如果當前對話的模型與選擇的模型不同，更新對話的模型
-    await conversationProvider.updateConversationModel(
-      conversationProvider.currentConversation!.id,
-      _currentModel!.id,
-    );
-  }
-
-  _isGenerating = true;
-  notifyListeners();
-
-    List<Map<String, String>>? processedImages;
-    List<Map<String, dynamic>> messageContent = [];
-  
-if (images != null && images.isNotEmpty) {
-  processedImages = [];
-  for (final imagePath in images) {
-    try {
-      if (!isTrialMode) {
-        debugPrint('Processing image for upload: $imagePath');
-        
-        int retries = 3;
-        Map<String, String>? uploadResult;
-        
-        while (retries > 0 && uploadResult == null) {
-          uploadResult = await _uploadImage(imagePath);
-          if (uploadResult == null) {
-            retries--;
-            if (retries > 0) {
-              await Future.delayed(Duration(seconds: 1));
-            }
-          }
-        }
-
-        if (uploadResult != null) {
-          processedImages.add(uploadResult);
-          debugPrint('Image processed successfully');
-
-          if (kIsWeb) {
-            messageContent.add({
-              'type': 'image_url',
-              'image_url': {'url': imagePath}
-            });
-          } else {
-            final bytes = await File(imagePath).readAsBytes();
-            final base64Image = base64Encode(bytes);
-            messageContent.add({
-              'type': 'image_url',
-              'image_url': {'url': 'data:image/jpeg;base64,$base64Image'}
-            });
-          }
-        } else {
-          debugPrint('Failed to upload image after all retries');
-        }
-      } else {
-        if (kIsWeb) {
-          processedImages.add({'url': imagePath});
-          messageContent.add({
-            'type': 'image_url',
-            'image_url': {'url': imagePath}
-          });
-        } else {
-          final bytes = await File(imagePath).readAsBytes();
-          final base64Image = base64Encode(bytes);
-          final base64Url = 'data:image/jpeg;base64,$base64Image';
-          
-          storeImageData(imagePath, ImageData(
-            path: imagePath,
-            bytes: bytes,
-            fileName: imagePath.split('/').last,
-          ));
-          
-          processedImages.add({'url': base64Url});
-          messageContent.add({
-            'type': 'image_url',
-            'image_url': {'url': base64Url}
-          });
-        }
-        debugPrint('Trial mode: Image processed locally');
-      }
-    } catch (e) {
-      debugPrint('Error processing image: $e');
-      if (isTrialMode) {
-        processedImages.add({'url': imagePath});
-        messageContent.add({
-          'type': 'image_url',
-          'image_url': {'url': imagePath}
-        });
-      }
-    }
-  }
-}
-
-    final trimmedContent = content.trim();
-    if (trimmedContent.isNotEmpty) {
-      messageContent.add({'type': 'text', 'text': trimmedContent});
-    }
-
-final timestamp = DateTime.now();
-
-final userMessage = Message(
-  id: isTrialMode ? 'trial_${DateTime.now().millisecondsSinceEpoch}' : null,
-  content: trimmedContent,
-  isUser: true,
-  timestamp: DateTime.now(),
-  role: 'user',
-  images: processedImages,
-);
-
-_messages.insert(0, userMessage);
-notifyListeners();
-
-// 保存用戶消息
-if (isTrialMode) {
-  final conversationProvider = Provider.of<ConversationProvider>(context, listen: false);
-  await conversationProvider.saveLocalMessage(_currentConversationId!, userMessage);
-} else {
-  await conversationProvider.saveMessage(userMessage);
-}
-    // 創建 AI 消息
-    final aiMessage = Message(
-      id: isTrialMode ? 'trial_${DateTime.now().millisecondsSinceEpoch}' : null,
-      content: useSearch ? '🔍 正在分析問題...' : '',
-      isUser: false,
-      timestamp: DateTime.now(),
-      isComplete: false,
-      role: 'assistant',
-    );
-    _messages.insert(0, aiMessage);
-    notifyListeners();
-
-    try {
-      List<SearchResult>? searchResults;
-      if (useSearch) {
-        // 更新搜尋狀態並生成關鍵字
-        _messages[0] = _messages[0].copyWith(
-          content: '🔍 正在生成搜尋關鍵字...',
-        );
-        notifyListeners();
-
-        final searchKeywords = await _generateSearchKeywords(trimmedContent);
-        _messages[0] = _messages[0].copyWith(
-          content: '🔍 搜尋關鍵字：$searchKeywords\n正在搜尋相關資訊...',
-        );
-        notifyListeners();
-
-        // 執行搜尋
-        searchResults = await _performSearch(searchKeywords);
-        _messages[0] = _messages[0].copyWith(
-          content: '📚 找到 ${searchResults.length} 個相關結果\n正在整理資訊...',
-        );
-        notifyListeners();
-      }
-
-      // 處理搜尋結果
-      String systemPrompt = '';
-      if (searchResults != null && searchResults.isNotEmpty) {
-        systemPrompt = '我找到了一些相關資訊：\n\n';
-        for (var result in searchResults) {
-          if (result.title.isNotEmpty && result.content.isNotEmpty) {
-            systemPrompt += '來源: ${result.title}\n';
-            systemPrompt += '內容: ${result.content}\n\n';
-          }
-        }
-        
-        searchResults = searchResults.where((result) => 
-          result.title.isNotEmpty && 
-          result.content.isNotEmpty
-        ).toList();
-        
-        systemPrompt += '根據以上資訊，參考多一點資訊，來回答你的問題，且要是最新資訊，詳細一點可以列點：\n';
-
-        _messages[0] = _messages[0].copyWith(
-          content: '🤔 正在根據搜尋結果生成回答...',
-          searchResults: searchResults,
-        );
-        notifyListeners();
-      }
-
-      // 建立 WebSocket 連接
-      await _connectWebSocket();
-      
-      if (!_isConnected) {
-        throw Exception('無法建立 WebSocket 連接');
-      }
-
-      final requestBody = {
-        'model': _currentModel!.id,
-        'messages': [
-          if (systemPrompt.isNotEmpty)
-            {
-              'role': 'system',
-              'content': systemPrompt,
-            },
-          ...(_getContextMessages()),
-          {
-            'role': 'user',
-            'content': messageContent,
-          }
-        ],
-        'max_tokens': 1000,
-        'stream': true,
-      };
-
-      // 發送消息到 WebSocket
-      _channel!.sink.add(jsonEncode(requestBody));
-      String currentContent = '';
-
-      // 設置 WebSocket 監聽器
-_currentGeneration = _channel!.stream.listen(
-  (data) {
-    if (data is String) {
-      if (data.startsWith('data: [DONE]')) {
-        // 收到完成信號，處理消息完成邏輯
-        _handleMessageComplete(currentContent, searchResults); // 這裡沒有正確處理完成狀態
-        return;
-      }
-      
-      if (data.startsWith('data: ')) {
-        String jsonData = data.substring(6);
-        try {
-          final parsed = jsonDecode(jsonData);
-          final content = parsed['choices'][0]['delta']['content'] ?? '';
-          currentContent += content;
-          
-          _messages[0] = _messages[0].copyWith(
-            content: currentContent,
-            searchResults: searchResults,
-          );
-          notifyListeners();
-        } catch (e) {
-          debugPrint('Error parsing WebSocket data: $e');
-        }
-      }
-    }
-  },
-  onDone: () {
-    debugPrint('WebSocket connection closed');
-    _isGenerating = false;
-    _currentGeneration = null;
-    _channel?.sink.close();
-    _channel = null;
-    _isConnected = false;
-    notifyListeners();
-  },
-  onError: (error) {
-    debugPrint('WebSocket error: $error');
-    _messages[0] = _messages[0].copyWith(
-      content: '❌ WebSocket 連接錯誤',
-      isComplete: true,
-    );
-    _isGenerating = false;
-    notifyListeners();
-  },
-  cancelOnError: true,
-);
-      
-    } catch (e) {
-      debugPrint('Error in send message: $e');
-      _messages[0] = _messages[0].copyWith(
-        content: '❌ 處理訊息時發生錯誤',
-        isComplete: true,
-      );
-      _isGenerating = false;
-      notifyListeners();
-    }
 }
 
 Future<void> _resetAllGenerationStates() async {

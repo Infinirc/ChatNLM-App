@@ -10,7 +10,7 @@
 		</data>
 		<key>Headers/soundpool-Swift.h</key>
 		<data>
-		Y9Q2dBhmvJmbwpsrqmEyn/534D4=
+		UnnRiAQ0g6tJQvkyq47Yv/V51lw=
 		</data>
 		<key>Headers/soundpool-umbrella.h</key>
 		<data>
@@ -18,7 +18,7 @@
 		</data>
 		<key>Info.plist</key>
 		<data>
-		DzkcG4FA05MramUhwEkzL31Bg4Q=
+		0rLpjZQpEClXp9zkjsIKJAj6nDA=
 		</data>
 		<key>Modules/module.modulemap</key>
 		<data>
@@ -26,11 +26,11 @@
 		</data>
 		<key>Modules/soundpool.swiftmodule/Project/arm64-apple-ios-simulator.swiftsourceinfo</key>
 		<data>
-		/6MwKGiNlljZ6Wi1n4jz+pKHkQU=
+		DIPEdbqzZn0mGk9GB8D94MkbPlU=
 		</data>
 		<key>Modules/soundpool.swiftmodule/Project/x86_64-apple-ios-simulator.swiftsourceinfo</key>
 		<data>
-		rgczNBEEeBU2y/5euOFuGEwbvPY=
+		CSipQMRoqrhhqnCWeX0d5tD/ocY=
 		</data>
 		<key>Modules/soundpool.swiftmodule/arm64-apple-ios-simulator.abi.json</key>
 		<data>
@@ -38,11 +38,11 @@
 		</data>
 		<key>Modules/soundpool.swiftmodule/arm64-apple-ios-simulator.swiftdoc</key>
 		<data>
-		Zss7dLf4plYT+XeJGbr5/Vs3xf4=
+		hqO29vKjvoIq3Hep/RcQGtXiTok=
 		</data>
 		<key>Modules/soundpool.swiftmodule/arm64-apple-ios-simulator.swiftmodule</key>
 		<data>
-		6HXcFKrkJMFGmhLQQjY0neTkQAg=
+		UMPjzz8zCffGGAlf9Tr+bZmL/Ik=
 		</data>
 		<key>Modules/soundpool.swiftmodule/x86_64-apple-ios-simulator.abi.json</key>
 		<data>
@@ -50,11 +50,11 @@
 		</data>
 		<key>Modules/soundpool.swiftmodule/x86_64-apple-ios-simulator.swiftdoc</key>
 		<data>
-		fwk0t0ToLd2XcOyeg/voObSySys=
+		ntrP23aId0I0cDIF5oFhVgHdxiY=
 		</data>
 		<key>Modules/soundpool.swiftmodule/x86_64-apple-ios-simulator.swiftmodule</key>
 		<data>
-		c2PhAnANEfkaTdi/hfWFEWrYM84=
+		rynPz9vHGA/zLoA0/PJpvx5VtwE=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -70,7 +70,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			KvmQ4a71hqi9XnmsPvW6Bnr0oltqbh4Niu7gKjA/GHU=
+			qDDZWyr2dP3z/9nXj+iHMiBMJtDy9VHyvDet98VgtnI=
 			</data>
 		</dict>
 		<key>Headers/soundpool-umbrella.h</key>
@@ -91,14 +91,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			CoN84AEQXm1VVccxkYeUl/2kZQsMsb8clz2H3BC8XUw=
+			JTw7n5EP5M32KJwx4cqoiOT1ogskB7l8UnO29pQ3bKA=
 			</data>
 		</dict>
 		<key>Modules/soundpool.swiftmodule/Project/x86_64-apple-ios-simulator.swiftsourceinfo</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			OCKPefkAY92D0pN2yGZpE4pmiFIFYOOJ0oO90CysjkI=
+			4NJDtFDZzRfDVq0Bhx72tDQP3Wblh9yWa0oe6UYS1mw=
 			</data>
 		</dict>
 		<key>Modules/soundpool.swiftmodule/arm64-apple-ios-simulator.abi.json</key>
@@ -112,14 +112,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			cEObqIn73Alxg+mf5T27mUX96VS+psSq2cptUbeCczs=
+			AKzNyp6pgS1u7webtQGMgKxGEBl/j4CqUZXL7I40PAI=
 			</data>
 		</dict>
 		<key>Modules/soundpool.swiftmodule/arm64-apple-ios-simulator.swiftmodule</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			+zlD1UxbJcaqgO6NBEFYmS2UTXmRMAm41Fi5FCLXAIY=
+			hRJuivMpHdIZ+3vfv0eRJ8WELShdQN3gV5ArfTJT4SE=
 			</data>
 		</dict>
 		<key>Modules/soundpool.swiftmodule/x86_64-apple-ios-simulator.abi.json</key>
@@ -133,14 +133,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			MPMmp1/xs7dl61ZMENhRKJ3mr8a85F6IdLUvtJqEevc=
+			l8ODhg33Pa1PFd6rZevYAu6h5oHBGLriBxUwiryLUc0=
 			</data>
 		</dict>
 		<key>Modules/soundpool.swiftmodule/x86_64-apple-ios-simulator.swiftmodule</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			rTHRNoHk16ONQBcIyM34rz5nZfWgdeiAlhgTrMt0D5w=
+			AuGFR5D3iU4UanpksSDpYXsDQR+M5gJUuwW91EwKy10=
 			</data>
 		</dict>
 	</dict>

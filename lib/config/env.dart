@@ -23,6 +23,18 @@ class Env {
   // 新增 WebSocket endpoint
   static String get chatCompletionsWsUrl => 'ws://chatnlm.api.infinirc.com/v1/chat/completions';
   
+
+  // Flask API endpoints
+  static const String flaskApiUrl = 'http://10.0.9.21:5003';
+  static String get imageGenerationUrl => '$flaskApiUrl/generate';
+  // 新增 WebSocket endpoint 用於圖片生成
+  static String get imageGenerationWsUrl => 'ws://10.0.9.21:5003/ws/image-generation';
+
+  // 修改圖片獲取URL以使用對話記錄伺服器
+  static String getGeneratedImageUrl(String filename) => 
+    '$conversationApiUrl/uploads/$filename';
+
+
   // Search endpoints (保持現有的不變)
   // 更新搜索 API URL
 static const String searchApiUrl = 'https://chatnlm-search.api.infinirc.com';
